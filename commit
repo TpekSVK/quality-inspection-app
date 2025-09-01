@@ -1,0 +1,4 @@
+git status
+git log --oneline -5  # ak nič nevypíše, urob prvý commit:
+git add .
+git commit -m "Initial commit"
