@@ -1,36 +1,51 @@
-# --- Python
+# Python
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+*.so
+*.dylib
 *.egg-info/
+*.dist-info/
+build/
+dist/
+
+# Venv
 .venv/
-env/
 venv/
 
-# --- IDE / OS
+# IDE
 .vscode/
 .idea/
+*.code-workspace
+
+# OS
 .DS_Store
 Thumbs.db
 
-# --- Build / Logs / Cache
-*.log
+# Caches & logs
+.pytest_cache/
+.mypy_cache/
 .cache/
-cache/
+*.log
 
-# --- Project outputs / large stuff
+# App artifacts
+captures/
+captures/**/*
+models/*.pt
+models/*.onnx
+models/*.engine
+models/**/best*.pt
+data/
+logs/
 runs/
-*.pt
-*.onnx
-*.engine
+# Env / secrets
+.env
+
+# Media (ak by si chcel ukladať videá/obrázky do repo koreňa)
 *.mp4
 *.avi
-
-# datasets (ignoruj obrázky/labely, ponechaj dataset.yaml)
-dataset/images/
-dataset/labels/
-!dataset/dataset.yaml
-
-# lokálne tajomstvá / konfigurácie
-camera_config.txt
+*.mov
+*.png
+*.jpg
+*.jpeg

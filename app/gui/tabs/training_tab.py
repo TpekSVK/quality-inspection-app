@@ -3,7 +3,8 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QHBoxLayout, QSpinBox,
     QDoubleSpinBox, QProgressBar, QTextEdit, QToolButton, QButtonGroup
 )
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal, Slot
+from pathlib import Path
 from PySide6.QtGui import QShortcut, QKeySequence
 from tools.dataset_check import analyze_dataset
 import os
@@ -23,120 +24,166 @@ except Exception:
     build_dataset = None
 
 
+from PySide6.QtCore import QThread, Signal
+from pathlib import Path
+
 class TrainingThread(QThread):
-    progress_signal = Signal(str)
-    finished_signal = Signal(str)
-    best_model_signal = Signal(str)  # absolute path to best.pt
+    """
+    Worker thread pre YOLO tréning (bez UI prvkov).
+    Signály:
+      - log(str): textový priebežný log
+      - progress_signal(int): priebeh 0..100
+      - best_model_signal(str): cesta k best modelu (napr. .../weights/best.pt)
+      - finished(object): {'save_dir': str|None} alebo {'error': str}
+      - finished_signal(object): alias na finished (kompatibilita)
+    """
+    log = Signal(str)
+    progress_signal = Signal(int)
+    best_model_signal = Signal(str)
+    finished = Signal(object)          # ✅ namiesto dict
+    finished_signal = Signal(object)   # ✅ alias, tiež object
 
-    def __init__(self, model_path, data_yaml, epochs, batch, lr):
+    def __init__(self, model_path: str, data_yaml: str, epochs: int, batch: int, lr: float, imgsz: int = 640):
         super().__init__()
-        self.btn_check = QToolButton(); self.btn_check.setText("Skontrolovať dataset"); self.btn_check.setStyleSheet(TOOLBUTTON)
-        self.btn_tune  = QToolButton(); self.btn_tune.setText("Kalibrovať prah (val)"); self.btn_tune.setStyleSheet(TOOLBUTTON)
-        layout.addWidget(self.btn_check)
-        layout.addWidget(self.btn_tune)
-
-        self.btn_check.clicked.connect(self._do_check)
-        self.btn_tune.clicked.connect(self._do_tune)
-
+        self._last_prog = -1
         self.model_path = model_path
         self.data_yaml = data_yaml
-        self.epochs = epochs
-        self.batch = batch
-        self.lr = lr
+        self.epochs = int(epochs)
+        self.batch = int(batch)
+        self.lr = float(lr)
+        self.imgsz = int(imgsz)
+        self._best_emitted = set()
 
-def _do_check(self):
-    try:
-        rep = analyze_dataset("dataset")
-        self.log_output.append("=== DATASET CHECK ===")
-        self.log_output.append(rep)
-        self.log_output.append("=====================")
-    except Exception as e:
-        self.log_output.append(f"❌ Dataset check zlyhal: {e}")
-
-def _do_tune(self):
-    """
-    Jednoduchý kalibrátor: načíta posledný best model (assets/models/last_best.txt),
-    spustí predikcie na val/ a odporučí prah (max F1). Ak sú dáta malé, funguje to rýchlo.
-    """
-    try:
-        best_txt = os.path.join("assets","models","last_best.txt")
-        if not os.path.exists(best_txt):
-            self.log_output.append("ℹ️ Nenašiel som assets/models/last_best.txt. Najprv natrénuj model.")
+    def _emit_best_if_exists(self, save_dir: Path | None):
+        if not save_dir:
             return
-        best_path = open(best_txt,"r").read().strip()
-        if not os.path.exists(best_path):
-            self.log_output.append(f"ℹ️ Best model neexistuje: {best_path}")
-            return
-        # lazy import + výpočet
-        from ultralytics import YOLO
-        import glob, os
-        import numpy as np
-
-        model = YOLO(best_path)
-        val_imgs = glob.glob(os.path.join("dataset","images","val","*.png")) + \
-                   glob.glob(os.path.join("dataset","images","val","*.jpg")) + \
-                   glob.glob(os.path.join("dataset","images","val","*.jpeg"))
-        if not val_imgs:
-            self.log_output.append("ℹ️ Žiadne obrázky v dataset/images/val/")
-            return
-
-        # zhromaždi všetky predikcie (conf) a GT prítomnosť (aspoň 1 box v labeli)
-        y_true = []
-        y_score = []
-        for ip in val_imgs:
-            base = os.path.splitext(os.path.basename(ip))[0]
-            lp = os.path.join("dataset","labels","val", base + ".txt")
-            has_obj = os.path.exists(lp) and (len([l for l in open(lp).read().strip().splitlines() if l.strip()])>0)
-            preds = model.predict(ip, verbose=False, conf=0.001)[0]  # veľmi nízky conf, zoberieme max
-            confs = preds.boxes.conf.cpu().numpy() if preds.boxes is not None and preds.boxes.conf is not None else np.array([])
-            score = float(confs.max()) if confs.size else 0.0
-            y_true.append(1 if has_obj else 0)
-            y_score.append(score)
-
-        # vyhodnoť prahy 0..1
-        y_true = np.array(y_true, dtype=int)
-        y_score = np.array(y_score, dtype=float)
-        best_f1 = -1.0
-        best_thr = 0.5
-        for thr in np.linspace(0.05, 0.95, 19):
-            y_pred = (y_score >= thr).astype(int)
-            tp = int(((y_pred==1) & (y_true==1)).sum())
-            fp = int(((y_pred==1) & (y_true==0)).sum())
-            fn = int(((y_pred==0) & (y_true==1)).sum())
-            prec = tp / (tp+fp) if (tp+fp)>0 else 0.0
-            rec  = tp / (tp+fn) if (tp+fn)>0 else 0.0
-            f1   = 2*prec*rec/(prec+rec) if (prec+rec)>0 else 0.0
-            if f1 > best_f1:
-                best_f1 = f1
-                best_thr = thr
-
-        self.log_output.append(f"🎯 Odporúčaný conf threshold ≈ {best_thr:.2f} (F1={best_f1:.3f})")
-        self.log_output.append("➡️ Nastav ho v 'Evaluation Settings' ako Confidence threshold (%).")
-    except Exception as e:
-        self.log_output.append(f"❌ Kalibrátor prahu zlyhal: {e}")
-
+        for p in [save_dir / "weights" / "best.pt", save_dir / "weights" / "best.onnx",
+                  save_dir / "best.pt", save_dir / "best.onnx"]:
+            p = Path(p)
+            if p.exists():
+                s = str(p.resolve())
+                if s not in self._best_emitted:
+                    self._best_emitted.add(s)
+                    self.best_model_signal.emit(s)
 
     def run(self):
-        self.progress_signal.emit(f"Načítavam model {self.model_path} ...")
         try:
+            # vypnúť online checky (stabilita v PySide6+Shiboken)
+            import os
+            os.environ.setdefault("ULTRALYTICS_HUB", "0")
+            os.environ.setdefault("ULTRALYTICS_UPDATE", "0")
+            os.environ.setdefault("YOLO_VERBOSE", "0")
+
+            from ultralytics import YOLO
+            # umlčať sieťové kontroly (ak sú v tvojej verzii)
+            try:
+                import ultralytics.utils.checks as ychecks
+                ychecks.is_online = lambda *a, **k: False
+                ychecks.check_latest_pypi_version = lambda *a, **k: ""
+                ychecks.check_pip_update_available = lambda *a, **k: False
+            except Exception:
+                pass
+
+            self.progress_signal.emit(0)
+            self.log.emit(
+                f"Starting training: model={self.model_path}, data={self.data_yaml}, "
+                f"epochs={self.epochs}, batch={self.batch}, lr0={self.lr}, imgsz={self.imgsz}"
+            )
+
             model = YOLO(self.model_path)
+            run_save_dir = None
+            self._last_prog = -1  # debounce
+
+            # --- definícia callbackov ---
+            from pathlib import Path
+
+            def _on_epoch_end(trainer):
+                try:
+                    total = int(getattr(trainer, "epochs", self.epochs) or self.epochs)
+                    cur = int(getattr(trainer, "epoch", -1)) + 1
+                    prog = int(max(0, min(100, round(cur / max(1, total) * 100))))
+                    if prog != self._last_prog:
+                        self.progress_signal.emit(prog)
+                        self._last_prog = prog
+                    if cur == 1 or cur % 5 == 0 or cur == total:
+                        self.log.emit(f"Epoch {cur}/{total} done")
+
+                    sd = Path(getattr(trainer, "save_dir", "")) if hasattr(trainer, "save_dir") else (run_save_dir or Path())
+                    self._emit_best_if_exists(sd)
+
+                    if self.isInterruptionRequested():
+                        try:
+                            trainer.stop_training = True
+                        except Exception:
+                            pass
+                        self.log.emit("⏹️ Training stop requested; finishing current epoch…")
+                except Exception as e:
+                    try:
+                        self.log.emit(f"[WARN] on_epoch_end: {e}")
+                    except Exception:
+                        pass
+
+            def _on_model_save(trainer):
+                try:
+                    sd = Path(getattr(trainer, "save_dir", "")) if hasattr(trainer, "save_dir") else (run_save_dir or Path())
+                    self._emit_best_if_exists(sd)
+                except Exception:
+                    pass
+
+            # --- REGISTRÁCIA CALLBACKOV CEZ add_callback (nie cez callbacks=) ---
+            try:
+                model.add_callback("on_fit_epoch_end", _on_epoch_end)
+            except Exception:
+                pass
+            try:
+                model.add_callback("on_train_epoch_end", _on_epoch_end)  # pre iné verzie
+            except Exception:
+                pass
+            try:
+                model.add_callback("on_model_save", _on_model_save)
+            except Exception:
+                pass
+
+            # --- TRÉNING BEZ 'callbacks=' ---
             results = model.train(
                 data=self.data_yaml,
                 epochs=self.epochs,
                 batch=self.batch,
                 lr0=self.lr,
-                verbose=True
+                imgsz=self.imgsz,
+                verbose=False,
             )
-            best_model = os.path.abspath(str(results.save_dir / "weights" / "best.pt"))
-            os.makedirs(os.path.join("assets", "models"), exist_ok=True)
-            with open(os.path.join("assets", "models", "last_best.txt"), "w") as fp:
-                fp.write(best_model + "\n")
 
-            self.best_model_signal.emit(best_model)
-            self.finished_signal.emit(f"✅ Trénovanie dokončené! Najlepší model: {best_model}")
+            self.progress_signal.emit(100)
+
+            # finálne info o save_dir + pokus odoslať best.*
+            try:
+                from pathlib import Path as _P
+                run_save_dir = _P(getattr(results, "save_dir", "")) if hasattr(results, "save_dir") else None
+                self._emit_best_if_exists(run_save_dir)
+            except Exception:
+                pass
+
+            payload = {"save_dir": str(run_save_dir) if run_save_dir else None}
+            self.finished.emit(payload)
+            self.finished_signal.emit(payload)
+
         except Exception as e:
-            self.finished_signal.emit(f"❌ Chyba pri trénovaní: {e}")
-
+            # log do súboru, aby si mal detail
+            import traceback, datetime
+            from pathlib import Path
+            err_text = traceback.format_exc()
+            log_dir = Path("logs"); log_dir.mkdir(exist_ok=True)
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            err_file = log_dir / f"training_error_{ts}.txt"
+            try:
+                err_file.write_text(err_text, encoding="utf-8")
+            except Exception:
+                pass
+            self.log.emit(f"[ERR] {e}")
+            payload = {"error": str(e), "error_file": str(err_file)}
+            self.finished.emit(payload)
+            self.finished_signal.emit(payload)
 
 class TrainingTab(QWidget):
     model_ready = Signal(str)  # path to best.pt
@@ -223,6 +270,66 @@ class TrainingTab(QWidget):
         # signály
         self.train_btn.clicked.connect(self.start_training)
 
+    def stop_training(self):
+        if getattr(self, "thread", None):
+            self._append_log("Stopping training…")
+            # požiadaj vlákno o prerušenie
+            self.thread.requestInterruption()
+
+    def _cleanup_thread(self):
+        t = getattr(self, "thread", None)
+        if t is None:
+            return
+        try:
+            t.wait(5000)  # počkaj max 5s nech sa pekne ukončí
+        except Exception:
+            pass
+        try:
+            t.deleteLater()
+        except Exception:
+            pass
+        self.thread = None
+
+    def _on_train_done(self, payload: dict | None = None):
+        """Volá sa po skončení tréningu (úspech/ chyba)."""
+        if payload and isinstance(payload, dict) and payload.get("error"):
+            self._append_log(f"[ERR] {payload['error']}")
+        else:
+            save_dir = (payload or {}).get("save_dir")
+            self._append_log(f"✅ Training finished" + (f" → {save_dir}" if save_dir else ""))
+
+        # znovu povol tlačidlá (ak ich máš)
+        for name in ("btn_start", "btn_stop", "btn_train"):
+            if hasattr(self, name):
+                try:
+                    getattr(self, name).setEnabled(True)
+                except Exception:
+                    pass
+
+        # uvoľni referenciu na thread
+        if hasattr(self, "thread"):
+            self.thread = None
+    @Slot(str)
+    def _append_log(self, text: str):
+        """Bezpečné logovanie: do QTextEdit ak existuje, inak aspoň do konzoly."""
+        try:
+            # ak ešte nemáme log view, vytvoríme ho „lenive“
+            if not hasattr(self, "log_view"):
+                from PySide6.QtWidgets import QTextEdit, QVBoxLayout
+                self.log_view = QTextEdit(self)
+                self.log_view.setReadOnly(True)
+                # pridaj do existujúceho root layoutu (alebo vytvor nový)
+                lay = self.layout()
+                if lay is None:
+                    lay = QVBoxLayout(self)
+                    self.setLayout(lay)
+                lay.addWidget(self.log_view)
+            # zapíš text
+            self.log_view.append(text)
+        except Exception:
+            # fallback: aspoň nech to vidno v konzole
+            print(text)
+
     def _mk_tool(self, text, checked=False):
         b = QToolButton(); b.setText(text); b.setCheckable(True); b.setChecked(checked); return b
 
@@ -266,20 +373,104 @@ class TrainingTab(QWidget):
         lr = self.lr_spin.value()
 
         self.thread = TrainingThread(model_path, data_yaml, epochs, batch, lr)
+        self.thread.log.connect(self._append_log)
         self.thread.progress_signal.connect(self.update_progress)
-        self.thread.finished_signal.connect(self.training_finished)
         self.thread.best_model_signal.connect(self._on_best_model)
+        self.thread.finished.connect(self.training_finished)          # tvoj handler
+
+
+        # 👇 dôležité: uprac vlákno po skončení
+        self.thread.finished.connect(self._cleanup_thread)
+        self.thread.finished_signal.connect(self._cleanup_thread)
+
         self.thread.start()
 
-    def update_progress(self, text):
-        self.progress_label.setText(text)
-        self.log_output.append(text)
+    @Slot(int)
+    def update_progress(self, val: int):
+        # progress bar (ak ho máš v UI)
+        if hasattr(self, "progress_bar") and self.progress_bar:
+            self.progress_bar.setValue(int(val))
 
-    def training_finished(self, text):
-        self.progress_label.setText(text)
-        self.progress_bar.hide()
-        self.log_output.append(text)
+        # textový label (urob si text tu, nie "text" prem.)
+        if hasattr(self, "progress_label") and self.progress_label:
+            self.progress_label.setText(f"{int(val)} %")
 
+
+
+    @Slot(object)
+    def training_finished(self, payload):
+        """
+        payload: dict ako {"save_dir": "..."} alebo {"error": "...", "error_file": "..."}.
+        """
+        is_err = False
+        err_file = None
+
+        # priprav správu pre UI/log
+        if isinstance(payload, dict):
+            if payload.get("error"):
+                is_err = True
+                err_file = payload.get("error_file")
+                msg = f"❌ Training failed: {payload['error']}"
+                if err_file:
+                    msg += f"\nDetail log: {err_file}"
+            else:
+                sd = payload.get("save_dir") or "—"
+                msg = f"✅ Training finished → {sd}"
+        else:
+            msg = str(payload)
+
+        # progress do 100 % (tréning skončil – úspech alebo chyba)
+        if hasattr(self, "progress_bar") and self.progress_bar:
+            try:
+                self.progress_bar.setValue(100)
+            except Exception:
+                pass
+
+        # krátky text do labelu + celý text do tooltipu
+        if hasattr(self, "progress_label") and self.progress_label:
+            try:
+                first_line = msg.splitlines()[0] if msg else ""
+                self.progress_label.setText(first_line)
+                self.progress_label.setToolTip(msg)  # celý detail nech je dostupný myšou
+            except Exception:
+                pass
+
+        # výpis do log view a do konzoly (nech sa dá skopírovať)
+        try:
+            print(msg)
+        except Exception:
+            pass
+        if hasattr(self, "_append_log"):
+            try:
+                self._append_log(msg)
+            except Exception:
+                pass
+
+        # (voliteľné) zapamätaj si posledný error log pre rýchly prístup inde v UI
+        if is_err and err_file:
+            self.last_training_error_file = err_file
+
+        # znovu povol tlačidlá (ak ich máš)
+        for name in ("btn_start", "btn_stop", "btn_train"):
+            if hasattr(self, name):
+                try:
+                    getattr(self, name).setEnabled(True)
+                except Exception:
+                    pass
+
+        # uprac vlákno
+        if hasattr(self, "_cleanup_thread"):
+            self._cleanup_thread()
+
+    @Slot(str)
     def _on_best_model(self, path: str):
-        self.model_ready.emit(path)
-        self.log_output.append(f"🔁 Best model pripravený pre Live: {path}")
+        self._append_log(f"⭐ Best model saved: {path}")
+        # ak máš textové pole pre model v UI:
+        if hasattr(self, "txt_model_path"):
+            try:
+                self.txt_model_path.setText(path)
+            except Exception:
+                pass
+        # krátky feedback do labelu
+        if hasattr(self, "progress_label") and self.progress_label:
+            self.progress_label.setText("Best model saved")
