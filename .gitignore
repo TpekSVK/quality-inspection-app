@@ -1,0 +1,36 @@
+# --- Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+env/
+venv/
+
+# --- IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Build / Logs / Cache
+*.log
+.cache/
+cache/
+
+# --- Project outputs / large stuff
+runs/
+*.pt
+*.onnx
+*.engine
+*.mp4
+*.avi
+
+# datasets (ignoruj obrázky/labely, ponechaj dataset.yaml)
+dataset/images/
+dataset/labels/
+!dataset/dataset.yaml
+
+# lokálne tajomstvá / konfigurácie
+camera_config.txt
