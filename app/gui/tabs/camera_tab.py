@@ -1,4 +1,4 @@
-# tabs/camera_tab.py
+# app/gui/tabs/camera_tab.py
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QLineEdit,
     QComboBox, QPushButton, QSpinBox, QDoubleSpinBox, QCheckBox, QSizePolicy
@@ -8,10 +8,12 @@ from PySide6.QtGui import QImage, QPixmap
 import sys
 import cv2
 import numpy as np
+from app.gui.ui_style import TOOLBUTTON  # a prípadne PRIMARY_BUTTON, ak používaš
+
 
 # (voliteľné) jednoduché štýly
 try:
-    from ui_style import TOOLBUTTON
+    from app.gui.ui_style import TOOLBUTTON
 except Exception:
     TOOLBUTTON = ""
 

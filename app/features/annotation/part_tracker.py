@@ -3,7 +3,8 @@ import os
 from ultralytics import YOLO
 import cv2
 import datetime
-from annotation.label_manager import id_to_name
+from app.features.annotation.label_manager import id_to_name
+
 
 class PartTracker:
     def __init__(self, model_path="yolov8n.pt", save_dir="dataset"):

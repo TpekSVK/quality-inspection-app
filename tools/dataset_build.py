@@ -4,8 +4,9 @@ import yaml
 import cv2
 import numpy as np
 
-from annotation.mask_manager import load_masks
-from annotation.roi_manager import load_roi
+from app.features.annotation.mask_manager import load_masks
+from app.features.annotation.roi_manager import load_roi
+
 
 
 def _read_yaml(path):

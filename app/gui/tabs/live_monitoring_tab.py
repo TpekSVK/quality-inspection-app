@@ -3,7 +3,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QToolBu
 from PySide6.QtCore import Qt
 
 try:
-    from ui_style import TOOLBUTTON, PRIMARY_BUTTON
+    from app.gui.ui_style import TOOLBUTTON, PRIMARY_BUTTON
 except Exception:
     TOOLBUTTON = PRIMARY_BUTTON = ""
 

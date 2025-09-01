@@ -1,15 +1,17 @@
-# widgets/class_bar.py
+# app/gui/widgets/class_bar.py
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QToolButton, QMenu
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Signal, Qt
 
 try:
-    from ui_style import TOOLBUTTON, PRIMARY_BUTTON
+    from app.gui.ui_style import TOOLBUTTON, PRIMARY_BUTTON
 except Exception:
     TOOLBUTTON = ""
     PRIMARY_BUTTON = ""
 
-from annotation.label_manager import get_names, add_class, rename_class, remove_class
+# PÔVODNE: from annotation.label_manager import ...
+from app.features.annotation.label_manager import get_names, add_class, rename_class, remove_class
+from app.gui.ui_style import TOOLBUTTON, PRIMARY_BUTTON
 
 class ClassBar(QWidget):
     classChanged = Signal(str)

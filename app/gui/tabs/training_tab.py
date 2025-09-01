@@ -9,7 +9,7 @@ from tools.dataset_check import analyze_dataset
 import os
 
 try:
-    from ui_style import TOOLBUTTON, PRIMARY_BUTTON
+    from app.gui.ui_style import TOOLBUTTON, PRIMARY_BUTTON
 except Exception:
     TOOLBUTTON = PRIMARY_BUTTON = ""
 

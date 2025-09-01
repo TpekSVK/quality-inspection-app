@@ -7,18 +7,19 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtCore import Qt
-from annotation_widget import AnnotationWidget
-from widgets.class_bar import ClassBar
+from app.gui.widgets.annotation_widget import AnnotationWidget
+from app.gui.widgets.class_bar import ClassBar
 
 # štýly (voliteľné)
 try:
-    from ui_style import TOOLBUTTON, PRIMARY_BUTTON
+    from app.gui.ui_style import TOOLBUTTON, PRIMARY_BUTTON
 except Exception:
     TOOLBUTTON = ""
     PRIMARY_BUTTON = ""
 
-from annotation.roi_manager import clear_roi
-from annotation.mask_manager import clear_masks
+from app.features.annotation.roi_manager import clear_roi
+from app.features.annotation.mask_manager import clear_masks
+
 
 
 class DataAnnotationTab(QWidget):

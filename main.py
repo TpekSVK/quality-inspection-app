@@ -1,18 +1,12 @@
-### main.py
-import sys
-import cv2
-
-try:
-    cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_SILENT)
-except Exception:
-    pass
-
 from PySide6.QtWidgets import QApplication
-from gui_main import QualityApp
+from app.gui.main_window import QualityApp as MainWindow
+import sys
 
-
-if __name__ == "__main__":
+def main():
     app = QApplication(sys.argv)
-    window = QualityApp()
+    window = MainWindow()
     window.show()
     sys.exit(app.exec())
+
+if __name__ == "__main__":
+    main()

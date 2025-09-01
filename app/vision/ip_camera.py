@@ -1,5 +1,6 @@
 ### ip_camera.py
-from video_thread import VideoThread
+from app.vision.video_thread import VideoThread
+
 
 class IPCamera:
     def __init__(self):

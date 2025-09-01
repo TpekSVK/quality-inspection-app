@@ -8,9 +8,11 @@ from PySide6.QtCore import Qt, QRectF, QPointF
 import os
 import random
 
-from annotation.label_manager import ensure_yaml, get_names, name_to_id
-from annotation.roi_manager import save_roi, load_roi
-from annotation.mask_manager import add_mask, load_masks
+from app.features.annotation.label_manager import ensure_yaml, get_names, name_to_id
+from app.features.annotation.roi_manager import save_roi, load_roi
+from app.features.annotation.mask_manager import add_mask, load_masks
+from app.gui.ui_style import TOOLBUTTON, PRIMARY_BUTTON
+
 
 
 class ResizableRectItem(QGraphicsRectItem):

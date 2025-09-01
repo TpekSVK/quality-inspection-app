@@ -2,15 +2,15 @@
 import sys, cv2
 from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QTabWidget
 from PySide6.QtCore import Qt
-from tabs.data_annotation_tab import DataAnnotationTab
-from tabs.camera_tab import CameraTab
-from tabs.training_tab import TrainingTab
-from tabs.evaluation_tab import EvaluationTab
-from tabs.live_monitoring_tab import LiveMonitoringTab
-from app_logic import AppLogic
-from ip_camera import IPCamera
-from part_tracker import PartTracker
-from usb_camera import USBCamera
+from app.gui.tabs.data_annotation_tab import DataAnnotationTab
+from app.gui.tabs.camera_tab import CameraTab
+from app.gui.tabs.training_tab import TrainingTab
+from app.gui.tabs.evaluation_tab import EvaluationTab
+from app.gui.tabs.live_monitoring_tab import LiveMonitoringTab
+from app.logic import AppLogic
+from app.vision.ip_camera import IPCamera
+from app.features.annotation.part_tracker import PartTracker
+from app.vision.usb_camera import USBCamera
 import time
 
 

@@ -1,7 +1,8 @@
 # tools/dataset_check.py
 import os, glob
 from collections import defaultdict
-from annotation.label_manager import get_names
+from app.features.annotation.label_manager import get_names
+
 
 def _list(folder, exts=(".png",".jpg",".jpeg",".bmp")):
     files = []

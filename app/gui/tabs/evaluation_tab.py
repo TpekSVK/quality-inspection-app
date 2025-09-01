@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 try:
-    from ui_style import TOOLBUTTON
+    from app.gui.ui_style import TOOLBUTTON
 except Exception:
     TOOLBUTTON = ""
 
