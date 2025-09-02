@@ -7,26 +7,12 @@ from .base_tool import BaseTool, ToolResult
 def _warp_roi(img: np.ndarray, H: Optional[np.ndarray], roi: Tuple[int,int,int,int]) -> np.ndarray:
     x, y, w, h = roi
     if H is not None:
-        # warpneme celú fotku, potom vystrihneme ROI
         warped = cv.warpPerspective(img, H, (img.shape[1], img.shape[0]))
         return warped[y:y+h, x:x+w]
     else:
         return img[y:y+h, x:x+w]
 
 class DiffFromRefTool(BaseTool):
-    """
-    ELI5: Zoberieme ROI z referencie a z aktuálneho obrázka,
-    spravíme rozdiel, prahovanie a spočítame plochu blobov (defektov) + počet.
-    OK/NOK podľa LSL/USL (typicky USL na plochu blobov).
-    params:
-      - blur: int (Gauss blur kernel, napr. 3 alebo 5; 0 = vyp)
-      - diff_mode: "abs"|"ssim" (zatím "abs" je dosť)
-      - thresh: int (0..255) – binárny prah po dife
-      - morph_open: int (iters) – odstránenie šumu
-      - min_blob_area: int (px) – ignorovať malé bodky
-    measured = total_blob_area (px) alebo count (dá sa prepnúť parametrom 'measure' = 'area'|'count')
-    """
-
     def run(self, img_ref: np.ndarray, img_cur: np.ndarray, fixture_transform: Optional[np.ndarray]) -> ToolResult:
         x, y, w, h = self.roi_xywh
         roi_ref = _warp_roi(img_ref, fixture_transform, (x,y,w,h))
@@ -66,17 +52,16 @@ class DiffFromRefTool(BaseTool):
         measure_mode = self.params.get("measure", "area")
         measured = total_area if measure_mode == "area" else float(count)
 
-        # Limitné hodnoty
         lsl, usl = self.lsl, self.usl
         ok = True
         if lsl is not None and measured < lsl: ok = False
         if usl is not None and measured > usl: ok = False
 
-        # overlay (len ROI) – namaľujeme červené miesta
         overlay = cv.cvtColor(roi_cur, cv.COLOR_GRAY2BGR)
         overlay[kept_mask > 0] = (0, 0, 255)
 
         details = {
+            "roi_xywh": (x,y,w,h),
             "total_blob_area_px": total_area,
             "blob_count": count,
             "thresh": thresh_val,

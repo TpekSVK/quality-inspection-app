@@ -1,3 +1,4 @@
+# core/pipeline.py
 import time
 from typing import List, Dict, Optional
 import numpy as np
@@ -6,9 +7,7 @@ from .tools.base_tool import BaseTool, ToolResult
 class Pipeline:
     """
     Orchestruje: fixtúra -> tools -> verdict.
-    Fixtúra je implementovaná ako špeciálny tool alebo krok pred toolmi.
     """
-
     def __init__(self, tools: List[BaseTool], fixture, pxmm: Optional[Dict] = None):
         self.tools = tools
         self.fixture = fixture  # objekt s .estimate_transform(img)->np.ndarray
@@ -29,5 +28,5 @@ class Pipeline:
             "ok": verdict,
             "elapsed_ms": elapsed_ms,
             "results": results,
-            "fixture": {"has_transform": H is not None}
+            "fixture": {"H": H.tolist() if isinstance(H, np.ndarray) else None}
         }

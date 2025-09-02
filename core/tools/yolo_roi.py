@@ -144,31 +144,48 @@ class YOLOInROITool(BaseTool):
             boxes, cls_ids, cls_scores = boxes[keep_idx], cls_ids[keep_idx], cls_scores[keep_idx]
 
         # measured
-        if boxes.shape[0] == 0:
-            measured = 0.0 if measure_mode == "count" else 0.0
-        else:
-            if measure_mode == "count":
-                measured = float(boxes.shape[0])
-            elif measure_mode == "max_conf":
-                measured = float(cls_scores.max())
-            else:
-                measured = float(cls_scores.mean())
+        if boxes.shape[0] > 0:
+                # jednoduché NMS
+                idxs = cls_scores.argsort()[::-1]
+                keep_idx = []
+                while idxs.size > 0:
+                    i = idxs[0]; keep_idx.append(i)
+                    if idxs.size == 1: break
+                    xx1 = np.maximum(boxes[i,0], boxes[idxs[1:],0])
+                    yy1 = np.maximum(boxes[i,1], boxes[idxs[1:],1])
+                    xx2 = np.minimum(boxes[i,2], boxes[idxs[1:],2])
+                    yy2 = np.minimum(boxes[i,3], boxes[idxs[1:],3])
+                    w_ = np.maximum(0, xx2-xx1); h_ = np.maximum(0, yy2-yy1)
+                    inter = w_*h_
+                    union = (boxes[i,2]-boxes[i,0])*(boxes[i,3]-boxes[i,1]) + (boxes[idxs[1:],2]-boxes[idxs[1:],0])*(boxes[idxs[1:],3]-boxes[idxs[1:],1]) - inter
+                    iou = inter / (union + 1e-6)
+                    idxs = idxs[1:][iou <= iou_th]
+                boxes, cls_ids, cls_scores = boxes[keep_idx], cls_ids[keep_idx], cls_scores[keep_idx]
 
-        # LSL/USL vyhodnotenie
-        lsl, usl = self.lsl, self.usl
-        ok = True
-        if lsl is not None and measured < lsl: ok = False
-        if usl is not None and measured > usl: ok = False
+                if boxes.shape[0] == 0:
+                    measured = 0.0 if measure_mode == "count" else 0.0
+                else:
+                    if measure_mode == "count":
+                        measured = float(boxes.shape[0])
+                    elif measure_mode == "max_conf":
+                        measured = float(cls_scores.max())
+                    else:
+                        measured = float(cls_scores.mean())
 
-        # overlay
-        overlay = roi.copy()
-        for b, cid, sc in zip(boxes.astype(int), cls_ids, cls_scores):
-            cv.rectangle(overlay, (b[0], b[1]), (b[2], b[3]), (0,255,0) if ok else (0,0,255), 2)
-            cv.putText(overlay, f"{cid}:{sc:.2f}", (b[0], max(0, b[1]-5)), cv.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+                lsl, usl = self.lsl, self.usl
+                ok = True
+                if lsl is not None and measured < lsl: ok = False
+                if usl is not None and measured > usl: ok = False
 
-        details = {
-            "detections": len(boxes),
-            "classes": cls_ids.tolist() if len(cls_ids)>0 else [],
-            "scores": cls_scores.tolist() if len(cls_scores)>0 else []
-        }
-        return ToolResult(ok=ok, measured=measured, lsl=lsl, usl=usl, details=details, overlay=overlay)
+                overlay = roi.copy()
+                for b, cid, sc in zip(boxes.astype(int), cls_ids, cls_scores):
+                    cv.rectangle(overlay, (b[0], b[1]), (b[2], b[3]), (0,255,0) if ok else (0,0,255), 2)
+                    cv.putText(overlay, f"{cid}:{sc:.2f}", (b[0], max(0, b[1]-5)), cv.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+
+                details = {
+                    "roi_xywh": (x,y,w,h),
+                    "detections": int(boxes.shape[0]),
+                    "classes": cls_ids.tolist() if boxes.shape[0] else [],
+                    "scores": cls_scores.tolist() if boxes.shape[0] else []
+                }
+                return ToolResult(ok=ok, measured=measured, lsl=lsl, usl=usl, details=details, overlay=overlay)
