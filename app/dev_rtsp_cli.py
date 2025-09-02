@@ -1,6 +1,6 @@
 # app/dev_rtsp_cli.py
 import argparse, cv2 as cv, time
-from io.cameras.rtsp_camera import RTSPCamera
+from qcio.cameras.rtsp_camera import RTSPCamera
 
 def main():
     ap = argparse.ArgumentParser()

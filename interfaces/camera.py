@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Callable, Tuple
+from typing import Optional, Callable, Tuple, Protocol, runtime_checkable
 import numpy as np
 
 Frame = np.ndarray  # HxWxC (uint8) alebo HxW (mono)

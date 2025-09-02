@@ -2,6 +2,7 @@
 from PyQt5 import QtWidgets, QtCore
 import cv2 as cv
 import json
+from pathlib import Path
 from app.widgets.image_view import ImageView
 from storage.recipe_store_json import RecipeStoreJSON
 
@@ -10,12 +11,18 @@ class TeachTab(QtWidgets.QWidget):
         super().__init__(parent)
         self.state = state
         self.store = RecipeStoreJSON()
+        self.ref_path = None
+        self.ref_img = None
         self._build()
 
     def _build(self):
         layout = QtWidgets.QVBoxLayout(self)
         self.view = ImageView()
+        hl = QtWidgets.QHBoxLayout()
         btn_load = QtWidgets.QPushButton("Načítať snímku (ako referenciu)")
+        btn_capture = QtWidgets.QPushButton("Zachytiť z kamery (referencia)")
+        hl.addWidget(btn_load); hl.addWidget(btn_capture)
+
         btn_save = QtWidgets.QPushButton("Uložiť referenciu do receptu...")
         self.edit_recipe = QtWidgets.QLineEdit("FORMA_X_PRODUCT_Y")
         form = QtWidgets.QFormLayout()
@@ -23,10 +30,11 @@ class TeachTab(QtWidgets.QWidget):
 
         layout.addWidget(self.view)
         layout.addLayout(form)
-        layout.addWidget(btn_load)
+        layout.addLayout(hl)
         layout.addWidget(btn_save)
 
         btn_load.clicked.connect(self.load_ref)
+        btn_capture.clicked.connect(self.capture_ref)
         btn_save.clicked.connect(self.save_recipe)
 
     def load_ref(self):
@@ -37,6 +45,19 @@ class TeachTab(QtWidgets.QWidget):
             QtWidgets.QMessageBox.critical(self, "Chyba", "Neviem načítať obrázok.")
             return
         self.ref_path = path
+        self.ref_img = img
+        self.view.set_ndarray(img)
+
+    def capture_ref(self):
+        if self.state.camera is None:
+            QtWidgets.QMessageBox.warning(self, "Pozor", "Najprv v Nastaveniach vyber kameru a stlač 'Použiť'.")
+            return
+        img = self.state.get_frame(timeout_ms=300)
+        if img is None:
+            QtWidgets.QMessageBox.warning(self, "Pozor", "Z kamery neprišla snímka.")
+            return
+        self.ref_img = img
+        self.ref_path = None  # bude sa ukladať pri save
         self.view.set_ndarray(img)
 
     def save_recipe(self):
@@ -44,13 +65,21 @@ class TeachTab(QtWidgets.QWidget):
         if not name:
             QtWidgets.QMessageBox.warning(self, "Pozor", "Zadaj názov receptu.")
             return
-        if not hasattr(self, "ref_path"):
-            QtWidgets.QMessageBox.warning(self, "Pozor", "Najprv načítaj referenčný obrázok.")
+        if self.ref_img is None and not self.ref_path:
+            QtWidgets.QMessageBox.warning(self, "Pozor", "Najprv načítaj alebo zachyť referenčný obrázok.")
             return
-        # minimalistický recept
+
+        # ak sme zachytili z kamery, uložíme do recipes/<name>/reference.png
+        ref_path_final = self.ref_path
+        if self.ref_img is not None and self.ref_path is None:
+            d = Path("recipes")/name
+            d.mkdir(parents=True, exist_ok=True)
+            ref_path_final = str(d/"reference.png")
+            cv.imwrite(ref_path_final, self.ref_img)
+
         recipe = {
             "meta": {"name": name},
-            "reference_image": self.ref_path,
+            "reference_image": ref_path_final,
             "fixture": {"type":"template","tpl_xywh":[100,100,200,200],"min_score":0.6},
             "pxmm": None,
             "tools": [
@@ -63,4 +92,4 @@ class TeachTab(QtWidgets.QWidget):
             "plc": {"recipe_code":101}
         }
         self.store.save_version(name, recipe)
-        QtWidgets.QMessageBox.information(self, "OK", f"Recept {name} uložený. Prepnúť do RUN/Builder a načítať.")
+        QtWidgets.QMessageBox.information(self, "OK", f"Recept {name} uložený.")

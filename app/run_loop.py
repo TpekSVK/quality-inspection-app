@@ -9,8 +9,8 @@ from core.tools.yolo_roi import YOLOInROITool
 from core.tools.codes_decoder import decode_codes
 from storage.recipe_store_json import RecipeStoreJSON
 from storage.recipe_router import RecipeRouter
-from io.plc.modbus_server import ModbusApp
-from io.plc.plc_controller import PLCController
+from qcio.plc.modbus_server import ModbusApp
+from qcio.plc.plc_controller import PLCController
 from config.plc_map import HR_RECIPE_ID
 
 # Demo fallback cesty

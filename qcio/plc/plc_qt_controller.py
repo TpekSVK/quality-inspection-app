@@ -1,7 +1,7 @@
 # io/plc/plc_qt_controller.py
 import time
 from typing import Callable, Dict, Any
-from io.plc.modbus_server import ModbusApp
+from qcio.plc.modbus_server import ModbusApp
 from config.plc_map import *
 
 TRIGGER_COIL_ADDR = 20  # dohodnuté v predošlej časti

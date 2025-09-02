@@ -4,13 +4,37 @@ import numpy as np
 from typing import Dict, Tuple, Optional
 from .base_tool import BaseTool, ToolResult
 
-def _warp_roi(img: np.ndarray, H: Optional[np.ndarray], roi: Tuple[int,int,int,int]) -> np.ndarray:
+def _safe_crop(img: np.ndarray, roi: Tuple[int,int,int,int]) -> np.ndarray:
+    """Orež ROI tak, aby bol vždy vo vnútri obrázka (bez pádu)."""
     x, y, w, h = roi
+    H, W = img.shape[:2]
+    x1 = max(0, x)
+    y1 = max(0, y)
+    x2 = min(W, x + w)
+    y2 = min(H, y + h)
+    if x2 <= x1 or y2 <= y1:
+        return img[0:0, 0:0]  # prázdne
+    return img[y1:y2, x1:x2]
+
+def _warp_roi(img: np.ndarray, H: Optional[np.ndarray], roi: Tuple[int,int,int,int]) -> np.ndarray:
+    """Ak máme H, narovnáme celý obrázok a potom bezpečne orežeme ROI."""
     if H is not None:
         warped = cv.warpPerspective(img, H, (img.shape[1], img.shape[0]))
-        return warped[y:y+h, x:x+w]
+        return _safe_crop(warped, roi)
     else:
-        return img[y:y+h, x:x+w]
+        return _safe_crop(img, roi)
+
+def _align_same_size(a: np.ndarray, b: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Zarovná dve ROI na rovnaký rozmer odrezaním na spoločné minimum."""
+    if a.size == 0 or b.size == 0:
+        return a, b
+    ha, wa = a.shape[:2]
+    hb, wb = b.shape[:2]
+    h = min(ha, hb)
+    w = min(wa, wb)
+    if h <= 0 or w <= 0:
+        return a[0:0,0:0], b[0:0,0:0]
+    return a[:h, :w], b[:h, :w]
 
 class DiffFromRefTool(BaseTool):
     def run(self, img_ref: np.ndarray, img_cur: np.ndarray, fixture_transform: Optional[np.ndarray]) -> ToolResult:
@@ -18,8 +42,21 @@ class DiffFromRefTool(BaseTool):
         roi_ref = _warp_roi(img_ref, fixture_transform, (x,y,w,h))
         roi_cur = _warp_roi(img_cur, fixture_transform, (x,y,w,h))
 
+        # prevedieme na 1-kanál
         if roi_ref.ndim == 3: roi_ref = cv.cvtColor(roi_ref, cv.COLOR_BGR2GRAY)
         if roi_cur.ndim == 3: roi_cur = cv.cvtColor(roi_cur, cv.COLOR_BGR2GRAY)
+
+        # zarovnanie rozmerov (kvôli rozdielnym rozlíšeniam ref vs. RTSP)
+        roi_ref, roi_cur = _align_same_size(roi_ref, roi_cur)
+
+        # ak by ROI po orezaní vyšla prázdna → konfigurácia je mimo záberu
+        if roi_ref.size == 0 or roi_cur.size == 0:
+            details = {
+                "roi_xywh": (x,y,w,h),
+                "error": "ROI out of bounds for current/ref frame after clipping"
+            }
+            # nech je to NOK, aby to hneď upozornilo
+            return ToolResult(ok=False, measured=0.0, lsl=self.lsl, usl=self.usl, details=details, overlay=None)
 
         blur = int(self.params.get("blur", 3))
         if blur > 0 and blur % 2 == 1:
@@ -65,6 +102,7 @@ class DiffFromRefTool(BaseTool):
             "total_blob_area_px": total_area,
             "blob_count": count,
             "thresh": thresh_val,
-            "min_blob_area": min_blob_area
+            "min_blob_area": min_blob_area,
+            "aligned_roi_shape": overlay.shape[:2]
         }
         return ToolResult(ok=ok, measured=measured, lsl=lsl, usl=usl, details=details, overlay=overlay)

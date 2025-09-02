@@ -2,8 +2,8 @@
 import os
 from PyQt5 import QtWidgets, QtCore
 from interfaces.camera_dummy import DummyCamera
-from io.cameras.rtsp_camera import RTSPCamera
-from io.cameras.rtsp_gst_camera import RTSPGstCamera
+from qcio.cameras.rtsp_camera import RTSPCamera
+from qcio.cameras.rtsp_gst_camera import RTSPGstCamera
 
 class SettingsTab(QtWidgets.QWidget):
     def __init__(self, state, parent=None):
