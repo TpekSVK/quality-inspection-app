@@ -1,23 +1,28 @@
 ﻿# Python
 __pycache__/
-*.py[cod]
+*.pyc
+*.pyo
 *.pyd
 .venv/
 .env
+.ipynb_checkpoints/
+
+# VSCode
+.vscode/
+
+# Build/output
+dist/
+build/
+*.spec
+
+# Dáta a snímky
+datasets/
+recipes/*/*.png
+recipes/*/*.jpg
+recipes/*/*.bmp
+history/
+run_logs/
 
 # OS
 .DS_Store
 Thumbs.db
-
-# App runtime data
-history/
-datasets/
-recipes/*/reference.png
-recipes/*/current.json
-
-# Modely (veľké súbory) – nechávam ignorované
-models/**/*.onnx
-models/**/*.pth
-
-# VS Code
-.vscode/
