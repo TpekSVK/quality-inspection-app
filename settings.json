@@ -5,5 +5,8 @@
       "url": "rtsp://TpekSVK:Zsmedvedzie1991@192.168.0.104:554/stream2"
     }
   ],
-  "active_profile": "Tapoc100"
+  "active_profile": "Tapoc100",
+  "ui": {
+    "theme": "light"
+  }
 }

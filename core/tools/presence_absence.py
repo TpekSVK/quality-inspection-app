@@ -13,6 +13,7 @@ def _warp_roi(img: np.ndarray, H: Optional[np.ndarray], roi: Tuple[int,int,int,i
         return img[y:y+h, x:x+w]
 
 class PresenceAbsenceTool(BaseTool):
+    USES_MASKS = True  
     def run(self, img_ref: np.ndarray, img_cur: np.ndarray, fixture_transform: Optional[np.ndarray]) -> ToolResult:
         x, y, w, h = self.roi_xywh
         roi_cur = _warp_roi(img_cur, fixture_transform, (x,y,w,h))

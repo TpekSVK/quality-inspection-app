@@ -11,15 +11,26 @@ except Exception:
 from storage.settings_store import SettingsStore
 
 class SettingsTab(QtWidgets.QWidget):
+    # signal pre zmenu témy (dark/light)
+    themeChanged = QtCore.pyqtSignal(str)
+
     def __init__(self, state, parent=None):
         super().__init__(parent)
         self.state = state
         self.settings = SettingsStore()
         self._build()
         self._refresh_profiles()
+        self._load_ui_theme()
 
     def _build(self):
         layout = QtWidgets.QVBoxLayout(self)
+
+        # UI / Téma
+        g0 = QtWidgets.QGroupBox("UI")
+        f0 = QtWidgets.QFormLayout(g0)
+        self.cmb_theme = QtWidgets.QComboBox()
+        self.cmb_theme.addItems(["dark", "light"])
+        f0.addRow("Téma:", self.cmb_theme)
 
         # Recept
         g1 = QtWidgets.QGroupBox("Recept")
@@ -62,6 +73,7 @@ class SettingsTab(QtWidgets.QWidget):
         # Apply
         self.btn_apply = QtWidgets.QPushButton("Použiť nastavenia")
 
+        layout.addWidget(g0)
         layout.addWidget(g1)
         layout.addWidget(g2)
         layout.addWidget(g3)
@@ -73,6 +85,12 @@ class SettingsTab(QtWidgets.QWidget):
         self.btn_prof_del.clicked.connect(self.prof_del)
         self.btn_prof_use.clicked.connect(self.prof_use)
         self.list_prof.itemSelectionChanged.connect(self._on_prof_sel)
+
+    def _load_ui_theme(self):
+        theme = self.settings.get_ui_theme()
+        idx = self.cmb_theme.findText(theme or "dark")
+        if idx >= 0:
+            self.cmb_theme.setCurrentIndex(idx)
 
     def _refresh_profiles(self):
         self.list_prof.clear()
@@ -119,7 +137,12 @@ class SettingsTab(QtWidgets.QWidget):
         self.edit_rtsp.setText(p.get("url",""))
 
     def apply(self):
-        # recept
+        # 1) UI téma
+        theme = self.cmb_theme.currentText().lower()
+        self.settings.set_ui_theme(theme)
+        self.themeChanged.emit(theme)
+
+        # 2) recept
         name = self.edit_recipe.text().strip()
         try:
             self.state.build_from_recipe(name)
@@ -127,13 +150,12 @@ class SettingsTab(QtWidgets.QWidget):
             QtWidgets.QMessageBox.critical(self, "Chyba receptu", f"Recept sa nepodarilo načítať:\n{e}")
             return
 
-        # kamera
+        # 3) kamera
         cam_type = self.cmb_cam.currentText()
         try:
             if cam_type == "DummyCamera":
                 cam = DummyCamera()
             elif cam_type == "RTSP (OpenCV/FFmpeg)":
-                from qcio.cameras.rtsp_camera import RTSPCamera
                 cam = RTSPCamera(self.edit_rtsp.text().strip())
             else:
                 if RTSPGstCamera is None:
@@ -144,4 +166,4 @@ class SettingsTab(QtWidgets.QWidget):
             QtWidgets.QMessageBox.critical(self, "Chyba kamery", f"Kamera sa nepodarila spustiť:\n{e}")
             return
 
-        QtWidgets.QMessageBox.information(self, "OK", f"Nahodený recept {name} a kamera {cam_type}.")
+        QtWidgets.QMessageBox.information(self, "OK", f"Nahodený recept {name}, kamera {cam_type}, téma {theme}.")

@@ -102,6 +102,7 @@ class YOLOModel:
         return xyxy, cls_ids, cls_scores
 
 class YOLOInROITool(BaseTool):
+    USES_MASKS = True  
     """
     params:
       - onnx_path: str

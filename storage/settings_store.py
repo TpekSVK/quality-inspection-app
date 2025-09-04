@@ -3,23 +3,52 @@ import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
+DEFAULTS: Dict[str, Any] = {
+    "camera_profiles": [],
+    "active_profile": None,
+    "ui": {
+        "theme": "dark"  # "dark" alebo "light"
+    }
+}
+
 class SettingsStore:
     def __init__(self, path: str = "settings.json"):
         self.path = Path(path)
-        self.data = {"camera_profiles": [], "active_profile": None}
+        self.data: Dict[str, Any] = {}
         self.load()
+
+    def _merge_defaults(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        def merge(d: Dict[str, Any], ref: Dict[str, Any]) -> Dict[str, Any]:
+            for k, v in ref.items():
+                if k not in d:
+                    d[k] = v
+                elif isinstance(v, dict) and isinstance(d.get(k), dict):
+                    d[k] = merge(d[k], v)
+            return d
+        return merge(data or {}, json.loads(json.dumps(DEFAULTS)))
 
     def load(self):
         if self.path.exists():
             try:
                 self.data = json.loads(self.path.read_text(encoding="utf-8"))
             except Exception:
-                pass
+                self.data = {}
+        else:
+            self.data = {}
+        self.data = self._merge_defaults(self.data)
 
     def save(self):
         self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    # camera profiles
+    # --- UI: téma ---
+    def get_ui_theme(self) -> str:
+        return (self.data.get("ui") or {}).get("theme", "dark")
+
+    def set_ui_theme(self, theme: str):
+        self.data.setdefault("ui", {})["theme"] = (theme or "dark").lower()
+        self.save()
+
+    # --- camera profiles ---
     def profiles(self) -> List[Dict[str,Any]]:
         return list(self.data.get("camera_profiles", []))
 

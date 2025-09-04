@@ -16,32 +16,33 @@
   "pxmm": null,
   "tools": [
     {
-      "type": "diff_from_ref",
-      "name": "defects_roi_A",
+      "type": "presence_absence",
+      "name": "Kontrola B",
       "roi_xywh": [
-        329,
-        113,
-        80,
-        104
+        249,
+        104,
+        131,
+        140
       ],
       "params": {
-        "blur": 3,
-        "thresh": 25,
-        "morph_open": 1,
-        "min_blob_area": 20,
-        "measure": "area",
         "mask_rects": [
           [
-            94,
-            113,
-            132,
-            148
+            70,
+            84,
+            103,
+            142
+          ],
+          [
+            446,
+            102,
+            44,
+            112
           ]
         ]
       },
       "lsl": null,
       "usl": 200.0,
-      "units": "px"
+      "units": "ks"
     }
   ],
   "models": {},

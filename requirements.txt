@@ -1,0 +1,32 @@
+# === ZÁKLAD APPKY (GUI + CV) ===
+PyQt5>=5.15.9
+opencv-python>=4.8
+numpy>=1.26
+Pillow>=9.5
+PyYAML>=6.0
+
+# === IO / INTEGRÁCIE ===
+pymodbus>=3.5   # Modbus/TCP pre PLC
+
+# === QR/DM (tvorba QR – voliteľné) ===
+qrcode>=7.4
+
+# === YOLO cez ONNX runtime (CPU) ===
+onnxruntime>=1.17
+
+# --- VOLITEĽNÉ (NEINŠTALUJ, ak netreba) ---
+# Ak chceš GPU inference na Windows/NVIDIA:
+onnxruntime-gpu==1.17.*         # POZOR: potrebuje kompatibilné CUDA/cuDNN
+
+# Ak budeš trénovať YOLO priamo na notebooku (app to nepotrebuje na runtime):
+ultralytics>=8.0
+
+# Ak budeš dekódovať 1D/2D kódy cez zbar namiesto OpenCV (vyžaduje systémový ZBar):
+pyzbar>=0.1.9
+
+cd quality-inspection-app
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -U pip wheel
+pip install -r requirements.txt
+python -m app.gui_main
