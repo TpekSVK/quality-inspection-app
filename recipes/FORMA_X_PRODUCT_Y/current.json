@@ -17,36 +17,23 @@
   "tools": [
     {
       "type": "diff_from_ref",
-      "name": "diff_from_ref_1",
+      "name": "defects_roi_A",
       "roi_xywh": [
-        272,
-        152,
-        78,
-        84
+        244,
+        120,
+        147,
+        173
       ],
       "params": {
         "blur": 3,
-        "thresh": 45,
+        "thresh": 25,
         "morph_open": 1,
-        "min_blob_area": 150,
+        "min_blob_area": 20,
         "measure": "area",
-        "mask_rects": [
-          [
-            0,
-            2,
-            228,
-            23
-          ],
-          [
-            42,
-            25,
-            158,
-            316
-          ]
-        ]
+        "mask_rects": []
       },
       "lsl": null,
-      "usl": 0.0,
+      "usl": 200.0,
       "units": "px"
     }
   ],

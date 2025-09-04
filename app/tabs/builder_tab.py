@@ -39,7 +39,7 @@ HELP_TEXTS = {
     "usl": (
         "Horná hranica (USL)\n"
         "• Nad touto hodnotou je diel NOK.\n"
-        "• Nastav automaticky cez Auto-teach z OK snímok."
+        "• Nastav automaticky cez Auto-teach z OK snímok, alebo OK+NOK."
     ),
     "masks": (
         "Masky (fialové)\n"
@@ -73,6 +73,7 @@ class BuilderTab(QtWidgets.QWidget):
       ktorého poľa sa dotkneš.
     – Úchyty: ROI aj masky vieš chytiť za rohy/okraje a meniť.
     – Masky = ignorované oblasti (fialové), viac kusov naraz.
+    – Auto-teach: z OK (percentil) alebo OK+NOK (optimálny prah).
     """
     def __init__(self, state, parent=None):
         super().__init__(parent)
@@ -157,10 +158,12 @@ class BuilderTab(QtWidgets.QWidget):
 
         self.spin_fpr = QtWidgets.QDoubleSpinBox(); self.spin_fpr.setRange(0.0001,0.1); self.spin_fpr.setDecimals(4); self.spin_fpr.setValue(0.003)
         self.btn_autoteach = QtWidgets.QPushButton("Auto-teach horná hranica (USL) z OK snímok")
+        # NOVÉ tlačidlo: OK + NOK
+        self.btn_autoteach_both = QtWidgets.QPushButton("Auto-teach z OK+NOK (optimálny prah)")
 
         self.btn_apply = QtWidgets.QPushButton("Použiť zmeny do nástroja")
 
-        # Kontextová nápoveda (sem sa zobrazuje help)
+        # Kontextová nápoveda
         self.help_box = QtWidgets.QTextEdit()
         self.help_box.setReadOnly(True)
         self.help_box.setMinimumHeight(120)
@@ -183,6 +186,7 @@ class BuilderTab(QtWidgets.QWidget):
         right.addRow(QtWidgets.QLabel("<hr>"))
         right.addRow("Cieľová FPR", self.spin_fpr)
         right.addRow("", self.btn_autoteach)
+        right.addRow("", self.btn_autoteach_both)  # NOVÝ RIADOK
         right.addRow(QtWidgets.QLabel("<hr>"))
         right.addRow("", self.btn_apply)
         right.addRow("Nápoveda", self.help_box)
@@ -206,7 +210,8 @@ class BuilderTab(QtWidgets.QWidget):
         self.roi_view.maskAdded.connect(lambda *_: self._refresh_mask_list())
         self.btn_preset.clicked.connect(self.apply_preset)
         self.btn_apply.clicked.connect(self.apply_changes)
-        self.btn_autoteach.clicked.connect(self.run_autoteach)
+        self.btn_autoteach.clicked.connect(self.run_autoteach_ok_only)
+        self.btn_autoteach_both.clicked.connect(self.run_autoteach_ok_nok)  # NOVÝ handler
 
         # Kontextová nápoveda – sleduj focus
         for w in (self.spin_thresh, self.spin_morph, self.spin_blob, self.cmb_measure,
@@ -302,7 +307,8 @@ class BuilderTab(QtWidgets.QWidget):
         is_diff = (typ=="diff_from_ref")
         for w in (self.spin_thresh, self.spin_morph, self.spin_blob, self.cmb_measure,
                   self.btn_add_mask, self.btn_del_mask, self.btn_clear_masks,
-                  self.cmb_preset, self.btn_preset):
+                  self.cmb_preset, self.btn_preset,
+                  self.btn_autoteach, self.btn_autoteach_both):
             w.setEnabled(is_diff)
 
     def _on_mode_roi(self, checked: bool):
@@ -418,7 +424,8 @@ class BuilderTab(QtWidgets.QWidget):
         self._refresh_tool_list()
         QtWidgets.QMessageBox.information(self, "OK", "Zmeny aplikované. Nezabudni „Uložiť verziu“.")
 
-    def run_autoteach(self):
+    # ---------- Auto-teach: OK len ----------
+    def run_autoteach_ok_only(self):
         name = self.edit_recipe.text().strip()
         ok_dir = Path("datasets")/name/"ok"
         if not ok_dir.exists():
@@ -428,6 +435,7 @@ class BuilderTab(QtWidgets.QWidget):
         if idx is None or idx < 0:
             QtWidgets.QMessageBox.warning(self, "Auto-teach", "Vyber najprv nástroj.")
             return
+
         ref_path = self.recipe.get("reference_image", None)
         if not ref_path or not Path(ref_path).exists():
             QtWidgets.QMessageBox.warning(self, "Auto-teach", "Chýba referenčný obrázok v recepte.")
@@ -443,7 +451,7 @@ class BuilderTab(QtWidgets.QWidget):
             units=t.get("units","px²")
         )
         vals=[]
-        imgs = sorted(list((ok_dir).glob("*.png")) + list((ok_dir).glob("*.jpg")) + list((ok_dir).glob("*.bmp")))
+        imgs = sorted(list(ok_dir.glob("*.png")) + list(ok_dir.glob("*.jpg")) + list(ok_dir.glob("*.bmp")))
         for pth in imgs:
             cur = cv.imread(str(pth), cv.IMREAD_GRAYSCALE)
             if cur is None: continue
@@ -452,9 +460,114 @@ class BuilderTab(QtWidgets.QWidget):
         if not vals:
             QtWidgets.QMessageBox.warning(self, "Auto-teach", "Nenašiel som použiteľné OK snímky.")
             return
-        import numpy as np
         vals = np.array(vals, dtype=float)
         perc = 100.0 * (1.0 - float(self.spin_fpr.value()))
         usl = float(np.percentile(vals, perc))
         self.dbl_usl.setValue(usl)
-        QtWidgets.QMessageBox.information(self, "Auto-teach", f"Navrhované USL = {usl:.2f}. Klikni „Použiť zmeny“ a potom „Uložiť verziu“.")
+        QtWidgets.QMessageBox.information(self, "Auto-teach", f"USL = {usl:.2f} (len OK, FPR≈{float(self.spin_fpr.value()):.4f}). Klikni „Použiť zmeny“ a potom „Uložiť verziu“.")
+
+    # ---------- Auto-teach: OK + NOK ----------
+    def run_autoteach_ok_nok(self):
+        name = self.edit_recipe.text().strip()
+        ok_dir  = Path("datasets")/name/"ok"
+        nok_dir = Path("datasets")/name/"nok"
+        if not ok_dir.exists():
+            QtWidgets.QMessageBox.warning(self, "Auto-teach", f"Chýbajú OK snímky v {ok_dir}")
+            return
+        if not nok_dir.exists():
+            # fallback: použijeme OK-only
+            return self.run_autoteach_ok_only()
+
+        idx = self.current_tool_idx
+        if idx is None or idx < 0:
+            QtWidgets.QMessageBox.warning(self, "Auto-teach", "Vyber najprv nástroj.")
+            return
+
+        ref_path = self.recipe.get("reference_image", None)
+        if not ref_path or not Path(ref_path).exists():
+            QtWidgets.QMessageBox.warning(self, "Auto-teach", "Chýba referenčný obrázok v recepte.")
+            return
+        ref = cv.imread(ref_path, cv.IMREAD_GRAYSCALE)
+        t = self.recipe["tools"][idx]
+        if t.get("type") != "diff_from_ref":
+            QtWidgets.QMessageBox.warning(self, "Auto-teach", "OK+NOK prahovanie má zmysel pre Porovnanie s referenciou.")
+            return
+
+        from core.tools.diff_from_ref import DiffFromRefTool
+        tool = DiffFromRefTool(
+            name=t.get("name","Kontrola"),
+            roi_xywh=tuple(t.get("roi_xywh",[0,0,200,200])),
+            params=t.get("params",{}),
+            lsl=t.get("lsl"), usl=t.get("usl"),
+            units=t.get("units","px²")
+        )
+
+        def load_vals(d: Path):
+            imgs = sorted(list(d.glob("*.png")) + list(d.glob("*.jpg")) + list(d.glob("*.bmp")))
+            out=[]
+            for p in imgs:
+                cur = cv.imread(str(p), cv.IMREAD_GRAYSCALE)
+                if cur is None: continue
+                r = tool.run(ref, cur, fixture_transform=None)
+                out.append(float(r.measured))
+            return np.array(out, dtype=float)
+
+        m_ok  = load_vals(ok_dir)
+        m_nok = load_vals(nok_dir)
+
+        if m_ok.size == 0:
+            QtWidgets.QMessageBox.warning(self, "Auto-teach", "OK dataset prázdny.")
+            return
+        if m_nok.size == 0:
+            QtWidgets.QMessageBox.information(self, "Auto-teach", "NOK dataset prázdny – použijem OK-only.")
+            return self.run_autoteach_ok_only()
+
+        # Kandidátne prahy – spájame a triedime
+        candidates = np.unique(np.concatenate([m_ok, m_nok]))
+        if candidates.size > 2000:  # zrýchlenie: sub-sampling
+            candidates = np.linspace(candidates.min(), candidates.max(), 2000)
+
+        # Optimalizácia prahu
+        target_fpr = float(self.spin_fpr.value())  # horný limit FPR
+        best = None
+        best_key = None  # tuple pre triedenie (primárne FPR<=target, max J; sekundárne max TPR)
+        n_ok  = m_ok.size
+        n_nok = m_nok.size
+
+        for tval in candidates:
+            # „vyššie horšie“ → prah je USL: NOK ak m > t
+            tp = np.sum(m_nok > tval)   # správne chytené NOK
+            fn = np.sum(m_nok <= tval)  # nechytené NOK
+            fp = np.sum(m_ok  > tval)   # falošné poplachy
+            tn = np.sum(m_ok  <= tval)
+
+            tpr = tp / n_nok if n_nok else 0.0   # citlivosť
+            fpr = fp / n_ok  if n_ok  else 0.0
+            tnr = 1.0 - fpr
+            J   = tpr + tnr - 1.0
+
+            # Primárne chceme držať fpr <= target; potom max J; ako sekundárne max tpr
+            key = None
+            if fpr <= target_fpr:
+                key = (0, -J, -tpr)    # 0 = OK (spĺňa limit), potom max J, max TPR
+            else:
+                key = (1, fpr, -J)     # 1 = penalizácia (nespĺňa), minimalizuj FPR potom max J
+
+            if best_key is None or key < best_key:
+                best_key = key
+                best = (tval, tpr, fpr, J)
+
+        if best is None:
+            QtWidgets.QMessageBox.warning(self, "Auto-teach", "Nepodarilo sa nájsť prah.")
+            return
+
+        usl, tpr, fpr, J = best
+        self.dbl_usl.setValue(float(usl))
+        QtWidgets.QMessageBox.information(
+            self, "Auto-teach (OK+NOK)",
+            f"USL = {usl:.2f}\n"
+            f"TPR (zachytenie NOK) = {tpr*100:.1f} %\n"
+            f"FPR (falošné OK→NOK) = {fpr*100:.2f} %\n"
+            f"J = {J:.3f}\n\n"
+            "Klikni „Použiť zmeny“ a potom „Uložiť verziu“."
+        )
