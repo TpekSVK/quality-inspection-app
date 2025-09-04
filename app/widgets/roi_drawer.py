@@ -58,23 +58,34 @@ class ROIDrawer(QtWidgets.QLabel):
         self._roi = None
         self.update()
 
-    def add_mask_rect(self, x,y,w,h):
-        self._masks.append((int(x),int(y),int(w),int(h)))
-        self.maskAdded.emit(int(x),int(y),int(w),int(h))
-        self.update()
-
     def set_masks(self, rects):
         self._masks = [(int(x),int(y),int(w),int(h)) for (x,y,w,h) in rects]
-        self.masksChanged.emit()
-        self.update()
-
-    def clear_masks(self):
-        self._masks = []
+        self._active_mask = -1 if not self._masks else 0
         self.masksChanged.emit()
         self.update()
 
     def masks(self):
         return list(self._masks)
+
+    def add_mask_rect(self, x,y,w,h):
+        self._masks.append((int(x),int(y),int(w),int(h)))
+        self._active_mask = len(self._masks)-1
+        self.maskAdded.emit(int(x),int(y),int(w),int(h))
+        self.update()
+
+    def clear_masks(self):
+        self._masks = []
+        self._active_mask = -1
+        self.masksChanged.emit()
+        self.update()
+
+    def set_active_mask_index(self, idx: int):
+        if 0 <= idx < len(self._masks):
+            self._active_mask = idx
+        else:
+            self._active_mask = -1
+        self.update()
+    
 
     # --- vnútorné ---
     def _update_pix(self):

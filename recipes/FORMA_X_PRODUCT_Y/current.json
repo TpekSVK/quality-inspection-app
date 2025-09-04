@@ -19,10 +19,10 @@
       "type": "diff_from_ref",
       "name": "defects_roi_A",
       "roi_xywh": [
-        244,
-        120,
-        147,
-        173
+        329,
+        113,
+        80,
+        104
       ],
       "params": {
         "blur": 3,
@@ -30,7 +30,14 @@
         "morph_open": 1,
         "min_blob_area": 20,
         "measure": "area",
-        "mask_rects": []
+        "mask_rects": [
+          [
+            94,
+            113,
+            132,
+            148
+          ]
+        ]
       },
       "lsl": null,
       "usl": 200.0,

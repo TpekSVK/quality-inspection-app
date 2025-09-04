@@ -1,0 +1,51 @@
+{
+  "meta": {
+    "name": "FORMA_X_PRODUCT_Y"
+  },
+  "reference_image": "recipes\\FORMA_X_PRODUCT_Y\\reference.png",
+  "fixture": {
+    "type": "template",
+    "tpl_xywh": [
+      100,
+      100,
+      200,
+      200
+    ],
+    "min_score": 0.6
+  },
+  "pxmm": null,
+  "tools": [
+    {
+      "type": "diff_from_ref",
+      "name": "defects_roi_A",
+      "roi_xywh": [
+        260,
+        169,
+        88,
+        85
+      ],
+      "params": {
+        "blur": 3,
+        "thresh": 25,
+        "morph_open": 1,
+        "min_blob_area": 20,
+        "measure": "area",
+        "mask_rects": [
+          [
+            30,
+            116,
+            95,
+            84
+          ]
+        ]
+      },
+      "lsl": null,
+      "usl": 200.0,
+      "units": "px"
+    }
+  ],
+  "models": {},
+  "plc": {
+    "recipe_code": 101
+  }
+}
