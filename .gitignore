@@ -1,36 +1,23 @@
-# --- Python
+﻿# Python
 __pycache__/
 *.py[cod]
-*.pyo
 *.pyd
-*.egg-info/
 .venv/
-env/
-venv/
+.env
 
-# --- IDE / OS
-.vscode/
-.idea/
+# OS
 .DS_Store
 Thumbs.db
 
-# --- Build / Logs / Cache
-*.log
-.cache/
-cache/
+# App runtime data
+history/
+datasets/
+recipes/*/reference.png
+recipes/*/current.json
 
-# --- Project outputs / large stuff
-runs/
-*.pt
-*.onnx
-*.engine
-*.mp4
-*.avi
+# Modely (veľké súbory) – nechávam ignorované
+models/**/*.onnx
+models/**/*.pth
 
-# datasets (ignoruj obrázky/labely, ponechaj dataset.yaml)
-dataset/images/
-dataset/labels/
-!dataset/dataset.yaml
-
-# lokálne tajomstvá / konfigurácie
-camera_config.txt
+# VS Code
+.vscode/

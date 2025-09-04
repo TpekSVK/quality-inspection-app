@@ -1,20 +1,16 @@
 # config/plc_map.py
-# Modbus map (zero-based addressing, ako v našom serveri)
+# ELI5: mapovanie Modbus adries pre PLC handshake
+CO_READY       = 1
+CO_BUSY        = 2
+CO_TRIGGER_ACK = 3
+CO_RESULT_OK   = 4
+CO_RESULT_NOK  = 5
+CO_ERROR       = 6
+CO_HEARTBEAT   = 7
 
-# Coils (co)
-CO_READY       = 0
-CO_BUSY        = 1
-CO_TRIGGER_ACK = 2
-CO_RESULT_OK   = 3
-CO_RESULT_NOK  = 4
-CO_ERROR       = 5
-CO_HEARTBEAT   = 6
-
-# Holding registers (hr)
-HR_RECIPE_ID   = 0
-HR_CYCLE_MS    = 1
-HR_LAST_ERR    = 2
-HR_OK_COUNT    = 10
-HR_NOK_COUNT   = 11
-HR_RESULT_CODE = 60
-HR_MEASURES_0  = 20   # 20..39 vyhradených pre merania
+HR_RECIPE_ID   = 10
+HR_RESULT_CODE = 11
+HR_CYCLE_MS    = 12
+HR_OK_COUNT    = 13
+HR_NOK_COUNT   = 14
+HR_MEASURES_0  = 100  # prvých 10 meraní: 100..109

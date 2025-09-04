@@ -1,53 +1,26 @@
 # core/calibration.py
-import cv2 as cv
-import numpy as np
-from typing import Tuple, Optional, Dict
+from __future__ import annotations
+from typing import Tuple, Dict
+import math
 
-def calibrate_checkerboard(
-    img_gray: np.ndarray,
-    pattern_size: Tuple[int,int] = (7,7),
-    square_size_mm: float = 5.0
-) -> Dict[str,float]:
+def pxmm_from_two_points(pt1_px: Tuple[float,float], pt2_px: Tuple[float,float], distance_mm: float) -> Dict[str,float]:
     """
-    ELI5: nájdeme mriežku (7x7 vnútorných rohov). Z priemerných vzdialeností rohov
-    spočítame mm_per_px v oboch smeroch. Pre priemyselné merania to stačí.
+    ELI5: vyber na snímke dva body, ktoré v realite ležia 'distance_mm' od seba.
+    Spočítam pixlovú vzdialenosť a z nej mm/px. Vráti sa izotropná kalibrácia (X=Y).
     """
-    ok, corners = cv.findChessboardCorners(img_gray, pattern_size, flags=cv.CALIB_CB_ADAPTIVE_THRESH+cv.CALIB_CB_NORMALIZE_IMAGE)
-    if not ok:
-        raise RuntimeError("Checkerboard sa nenašiel.")
-
-    corners = cv.cornerSubPix(img_gray, corners, (11,11), (-1,-1),
-                              criteria=(cv.TERM_CRITERIA_EPS+cv.TERM_CRITERIA_MAX_ITER, 30, 0.1))
-    corners = corners.reshape(-1,2)
-    w, h = pattern_size
-    # horizontálne a vertikálne kroky v px
-    hori_dists, vert_dists = [], []
-    for r in range(h):
-        for c in range(w-1):
-            i = r*w + c
-            j = r*w + c + 1
-            hori_dists.append(np.linalg.norm(corners[j]-corners[i]))
-    for r in range(h-1):
-        for c in range(w):
-            i = r*w + c
-            j = (r+1)*w + c
-            vert_dists.append(np.linalg.norm(corners[j]-corners[i]))
-
-    px_per_square_h = float(np.mean(hori_dists))
-    px_per_square_v = float(np.mean(vert_dists))
-    mm_per_px_x = square_size_mm / px_per_square_h
-    mm_per_px_y = square_size_mm / px_per_square_v
-
-    return {"mm_per_px_x": mm_per_px_x, "mm_per_px_y": mm_per_px_y}
-
-def calibrate_two_points(
-    pt1: Tuple[int,int], pt2: Tuple[int,int], real_mm: float
-) -> Dict[str,float]:
-    """
-    ELI5: medzi dvoma bodmi v pixeloch zmeriame vzdialenosť -> vieme koľko mm je 1 px.
-    """
-    dist_px = float(np.hypot(pt2[0]-pt1[0], pt2[1]-pt1[1]))
-    if dist_px <= 0:
-        raise ValueError("Body sú rovnaké.")
-    mm_per_px = real_mm / dist_px
+    dx = float(pt2_px[0] - pt1_px[0])
+    dy = float(pt2_px[1] - pt1_px[1])
+    dpx = math.hypot(dx, dy)
+    if dpx <= 0:
+        raise ValueError("Body sa zhodujú – vzdialenosť v px je 0.")
+    mm_per_px = float(distance_mm) / dpx
     return {"mm_per_px_x": mm_per_px, "mm_per_px_y": mm_per_px}
+
+def px_per_mm_from_pxmm(pxmm: Dict[str,float]) -> Dict[str,float]:
+    """Pomocná inverzia: px/mm z mm/px."""
+    x = pxmm.get("mm_per_px_x", 0.0)
+    y = pxmm.get("mm_per_px_y", 0.0)
+    return {
+        "px_per_mm_x": (1.0/x if x else 0.0),
+        "px_per_mm_y": (1.0/y if y else 0.0),
+    }

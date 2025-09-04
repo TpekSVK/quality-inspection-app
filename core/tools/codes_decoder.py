@@ -1,55 +1,59 @@
 # core/tools/codes_decoder.py
-import cv2 as cv
+from __future__ import annotations
+from typing import List, Tuple, Optional, Dict, Any
 import numpy as np
-from typing import List, Tuple, Optional
+import cv2 as cv
 
 try:
     from pylibdmtx.pylibdmtx import decode as dmtx_decode
 except Exception:
     dmtx_decode = None
 
-def crop_roi(img: np.ndarray, roi_xywh: Optional[Tuple[int,int,int,int]]) -> np.ndarray:
-    if roi_xywh is None:
-        return img
-    x,y,w,h = roi_xywh
-    x,y = max(0,x), max(0,y)
-    return img[y:y+h, x:x+w].copy()
+def _crop_roi(img: np.ndarray, roi: Optional[Tuple[int,int,int,int]]) -> np.ndarray:
+    if roi is None: return img
+    x,y,w,h = roi
+    H,W = img.shape[:2]
+    x1=max(0,x); y1=max(0,y); x2=min(W,x+w); y2=min(H,y+h)
+    if x2<=x1 or y2<=y1: return img[0:0,0:0]
+    return img[y1:y2,x1:x2]
 
-def decode_qr(img_bgr: np.ndarray) -> List[str]:
-    """OpenCV QRCodeDetector (spoľahlivé, bez externých knižníc)."""
-    det = cv.QRCodeDetector()
-    data, points, _ = det.detectAndDecodeMulti(img_bgr)
-    if isinstance(data, list):
-        return [s for s in data if s]
-    elif isinstance(data, str) and data:
-        return [data]
-    return []
-
-def decode_dm(img_bgr: np.ndarray) -> List[str]:
-    """Data Matrix – ak je dostupný pylibdmtx, inak prázdny zoznam."""
-    if dmtx_decode is None:
+def decode_codes(img: np.ndarray, roi: Optional[Tuple[int,int,int,int]] = None) -> List[Dict[str,Any]]:
+    """
+    ELI5: skúsi DataMatrix (pylibdmtx), potom QR (OpenCV). Vráti zoznam nálezov.
+    """
+    if img is None or img.size==0:
         return []
-    gray = cv.cvtColor(img_bgr, cv.COLOR_BGR2GRAY)
-    res = dmtx_decode(gray)
-    out = []
-    for r in res:
+    roi_img = _crop_roi(img, roi)
+    if roi_img.ndim==3:
+        gray = cv.cvtColor(roi_img, cv.COLOR_BGR2GRAY)
+    else:
+        gray = roi_img
+
+    results: List[Dict[str,Any]] = []
+
+    # 1) DataMatrix (ak knižnica je)
+    if dmtx_decode is not None:
         try:
-            s = r.data.decode("utf-8", errors="ignore")
-            if s: out.append(s)
-        except: pass
-    return out
+            dec = dmtx_decode(gray)
+            for d in dec:
+                text = d.data.decode("utf-8", errors="ignore")
+                results.append({"type":"dm","text":text})
+        except Exception:
+            pass
 
-def decode_codes(img_bgr: np.ndarray, roi_xywh: Optional[Tuple[int,int,int,int]]=None) -> List[str]:
-    """
-    ELI5: z obrázka/ROI načítame QR a prípadne DM.
-    Vrátime list textov. Pre mapovanie do receptov pridáme prefix 'QR:' alebo 'DM:'.
-    """
-    roi = crop_roi(img_bgr, roi_xywh)
-    if roi.ndim == 2:
-        roi = cv.cvtColor(roi, cv.COLOR_GRAY2BGR)
+    # 2) QR (OpenCV)
+    try:
+        qr = cv.QRCodeDetector()
+        ok, texts, pts = qr.detectAndDecodeMulti(gray)
+        if ok and texts is not None:
+            for t in texts:
+                if t:
+                    results.append({"type":"qr","text":t})
+        else:
+            t, pts = qr.detectAndDecode(gray)
+            if t:
+                results.append({"type":"qr","text":t})
+    except Exception:
+        pass
 
-    res_qr = decode_qr(roi)
-    res_qr = [f"QR:{s}" for s in res_qr]
-    res_dm = decode_dm(roi)
-    res_dm = [f"DM:{s}" for s in res_dm]
-    return res_qr + res_dm
+    return results
