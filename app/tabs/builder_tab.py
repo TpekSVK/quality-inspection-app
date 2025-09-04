@@ -7,6 +7,19 @@ import cv2 as cv
 from storage.recipe_store_json import RecipeStoreJSON
 from app.widgets.roi_drawer import ROIDrawer
 
+try:
+    from core.tools.presence_absence import PresenceAbsenceTool
+except Exception:
+    PresenceAbsenceTool = None
+try:
+    from core.tools.yolo_roi import YoloRoiTool
+except Exception:
+    YoloRoiTool = None
+try:
+    from core.tools.diff_from_ref import DiffFromRefTool
+except Exception:
+    DiffFromRefTool = None
+
 def _mask_label(idx: int) -> str:
     return f"Maska {idx+1}"
 
@@ -84,7 +97,52 @@ class BuilderTab(QtWidgets.QWidget):
         self.ref_img = None
         self._build()
         self.load_recipe()
+        self._update_mask_buttons()
 
+    # ---------- Pomocné ----------
+    def _active_tool_type(self) -> str:
+        idx = self.current_tool_idx
+        if idx is None or idx < 0:
+            return ""
+        try:
+            return (self.recipe.get("tools", [])[idx] or {}).get("type","") or ""
+        except Exception:
+            return ""
+
+    def _tool_allows_masks(self) -> bool:
+        typ = (self._active_tool_type() or "").lower()
+        # masky majú zmysel pre tieto typy nástrojov:
+        return typ in {"diff_from_ref", "presence_absence", "yolo_roi"}
+
+    def _update_mask_buttons(self):
+        allow = self._tool_allows_masks()
+        # stav zoznamu masiek a výber
+        has_masks = False
+        has_sel = False
+        try:
+            has_masks = len(self.roi_view.masks()) > 0
+        except Exception:
+            pass
+        try:
+            has_sel = self.list_masks.currentRow() >= 0
+        except Exception:
+            pass
+
+        # enably
+        if hasattr(self, "btn_add_mask"):
+            self.btn_add_mask.setEnabled(allow)
+        if hasattr(self, "btn_del_mask"):
+            self.btn_del_mask.setEnabled(allow and has_masks and has_sel)
+        if hasattr(self, "btn_clear_masks"):
+            self.btn_clear_masks.setEnabled(allow and has_masks)
+
+        # režimové tlačidlá
+        if hasattr(self, "btn_mode_mask"):
+            self.btn_mode_mask.setEnabled(allow)
+        if hasattr(self, "btn_mode_roi"):
+            self.btn_mode_roi.setEnabled(True)  # ROI má zmysel vždy
+
+    # ---------- UI ----------
     def _build(self):
         layout = QtWidgets.QHBoxLayout(self)
 
@@ -207,7 +265,8 @@ class BuilderTab(QtWidgets.QWidget):
         self.btn_del_mask.clicked.connect(self.delete_selected_mask)
         self.btn_clear_masks.clicked.connect(self.clear_masks)
         self.list_masks.itemSelectionChanged.connect(self._on_mask_selected)
-        self.roi_view.maskAdded.connect(lambda *_: self._refresh_mask_list())
+        self.list_masks.itemSelectionChanged.connect(self._update_mask_buttons)  # update stavov
+        self.roi_view.maskAdded.connect(lambda *_: (self._refresh_mask_list(), self._update_mask_buttons()))
         self.btn_preset.clicked.connect(self.apply_preset)
         self.btn_apply.clicked.connect(self.apply_changes)
         self.btn_autoteach.clicked.connect(self.run_autoteach_ok_only)
@@ -242,6 +301,7 @@ class BuilderTab(QtWidgets.QWidget):
         self._load_ref_image()
         if self.list_tools.count() > 0:
             self.list_tools.setCurrentRow(0)
+        self._update_mask_buttons()
 
     def save_recipe(self):
         name = self.edit_recipe.text().strip()
@@ -277,8 +337,10 @@ class BuilderTab(QtWidgets.QWidget):
     def _on_tool_selected(self, row: int):
         self.current_tool_idx = row
         if row < 0:
-            self._clear_form(); 
+            self._clear_form()
+            self._update_mask_buttons()
             return
+
         t = self.recipe.get("tools", [])[row]
         typ = t.get("type","-")
         sk_typ = {"diff_from_ref":"Porovnanie s referenciou",
@@ -290,26 +352,31 @@ class BuilderTab(QtWidgets.QWidget):
         x,y,w,h = t.get("roi_xywh",[0,0,200,200])
         self.roi_view.set_roi(x,y,w,h)
 
-        params = t.get("params",{})
+        params = t.get("params",{}) or {}
         masks = params.get("mask_rects", []) or []
         self.roi_view.set_masks(masks)
         self._refresh_mask_list()
 
+        # Metrológia
         self.dbl_lsl.setValue(t.get("lsl", 0.0) if t.get("lsl") is not None else 0.0)
         self.dbl_usl.setValue(t.get("usl", 200.0) if t.get("usl") is not None else 200.0)
         self.edit_units.setText(t.get("units","px²"))
 
+        # Diff tool parametre (ostatné nástroje ich nepotrebujú)
         self.spin_thresh.setValue(int(params.get("thresh",35)))
         self.spin_morph.setValue(int(params.get("morph_open",1)))
         self.spin_blob.setValue(int(params.get("min_blob_area",120)))
         self.cmb_measure.setCurrentText("Plocha vád (px²)" if params.get("measure","area")=="area" else "Počet vád")
 
-        is_diff = (typ=="diff_from_ref")
+        is_diff = (typ == "diff_from_ref")
+        # Parametrove polia a autoteach len pre diff
         for w in (self.spin_thresh, self.spin_morph, self.spin_blob, self.cmb_measure,
-                  self.btn_add_mask, self.btn_del_mask, self.btn_clear_masks,
                   self.cmb_preset, self.btn_preset,
                   self.btn_autoteach, self.btn_autoteach_both):
             w.setEnabled(is_diff)
+
+        # Maskovacie ovládanie je osobitne (pre diff + presence_absence + yolo_roi)
+        self._update_mask_buttons()
 
     def _on_mode_roi(self, checked: bool):
         self.roi_view.set_mode("roi" if checked else "mask")
@@ -326,6 +393,8 @@ class BuilderTab(QtWidgets.QWidget):
         QtWidgets.QMessageBox.information(self, "ROI", "ROI nastavené. Klikni „Použiť zmeny do nástroja“ a potom „Uložiť verziu“.")
 
     def add_mask_from_drawn(self):
+        if not self._tool_allows_masks():
+            return
         rect = getattr(self.roi_view, "_temp_rect", None) or self.roi_view._roi
         if not rect:
             QtWidgets.QMessageBox.information(self, "Maska", "Nakresli obdĺžnik v režime MASKA (fialová).")
@@ -333,18 +402,25 @@ class BuilderTab(QtWidgets.QWidget):
         x,y,w,h = rect
         self.roi_view.add_mask_rect(x,y,w,h)
         self._refresh_mask_list()
+        self._update_mask_buttons()
 
     def delete_selected_mask(self):
+        if not self._tool_allows_masks():
+            return
         row = self.list_masks.currentRow()
         if row < 0: return
         masks = self.roi_view.masks()
         del masks[row]
         self.roi_view.set_masks(masks)
         self._refresh_mask_list()
+        self._update_mask_buttons()
 
     def clear_masks(self):
+        if not self._tool_allows_masks():
+            return
         self.roi_view.clear_masks()
         self._refresh_mask_list()
+        self._update_mask_buttons()
 
     def _refresh_mask_list(self):
         self.list_masks.clear()
@@ -380,6 +456,9 @@ class BuilderTab(QtWidgets.QWidget):
         }
         if typ == "diff_from_ref":
             new["params"] = {"blur":3, "thresh":35, "morph_open":1, "min_blob_area":120, "measure":"area", "mask_rects":[]}
+        else:
+            # aj pre Presence/Absence a YOLO chceme uložiť masky:
+            new["params"] = {"mask_rects":[]}
         self.recipe.setdefault("tools", []).append(new)
         self._refresh_tool_list()
         self.list_tools.setCurrentRow(self.list_tools.count()-1)
@@ -391,6 +470,7 @@ class BuilderTab(QtWidgets.QWidget):
         self._refresh_tool_list()
         self.current_tool_idx = None
         self._clear_form()
+        self._update_mask_buttons()
 
     def _clear_form(self):
         self.lbl_type.setText("-")
@@ -414,13 +494,18 @@ class BuilderTab(QtWidgets.QWidget):
         t["lsl"] = None if self.dbl_lsl.specialValueText()=="None" else float(self.dbl_lsl.value())
         t["usl"] = float(self.dbl_usl.value())
         t["units"] = self.edit_units.text().strip() or ("px²" if t.get("type")=="diff_from_ref" else "ks")
+
+        # Ukladaj masky pre VŠETKY podporované nástroje
+        p = t.setdefault("params", {})
+        p["mask_rects"] = [[int(a) for a in r] for r in self.roi_view.masks()]
+
+        # Diff-specific parametre
         if t.get("type") == "diff_from_ref":
-            p = t.setdefault("params",{})
             p["thresh"] = int(self.spin_thresh.value())
             p["morph_open"] = int(self.spin_morph.value())
             p["min_blob_area"] = int(self.spin_blob.value())
             p["measure"] = "area" if self.cmb_measure.currentText().startswith("Plocha") else "count"
-            p["mask_rects"] = [[int(a) for a in r] for r in self.roi_view.masks()]
+
         self._refresh_tool_list()
         QtWidgets.QMessageBox.information(self, "OK", "Zmeny aplikované. Nezabudni „Uložiť verziu“.")
 
