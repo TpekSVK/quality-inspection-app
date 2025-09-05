@@ -1,0 +1,69 @@
+{
+  "meta": {
+    "name": "FORMA_X_PRODUCT_Y"
+  },
+  "reference_image": "recipes\\FORMA_X_PRODUCT_Y\\reference.png",
+  "fixture": {
+    "type": "template",
+    "tpl_xywh": [
+      100,
+      100,
+      200,
+      200
+    ],
+    "min_score": 0.6
+  },
+  "pxmm": null,
+  "tools": [
+    {
+      "type": "diff_from_ref",
+      "name": "Počet vád",
+      "roi_xywh": [
+        260,
+        149,
+        113,
+        107
+      ],
+      "params": {
+        "blur": 3,
+        "mask_rects": [
+          [
+            34,
+            110,
+            150,
+            136
+          ],
+          [
+            409,
+            112,
+            95,
+            116
+          ],
+          [
+            160,
+            18,
+            129,
+            63
+          ],
+          [
+            382,
+            278,
+            55,
+            44
+          ]
+        ],
+        "measure": "count",
+        "min_blob_area": 120,
+        "morph_open": 1,
+        "thresh": 40
+      },
+      "lsl": null,
+      "usl": 198.0,
+      "units": "ks"
+    }
+  ],
+  "models": {},
+  "plc": {
+    "recipe_code": 101
+  }
+}

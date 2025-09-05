@@ -6,7 +6,7 @@ import cv2 as cv
 
 from storage.recipe_store_json import RecipeStoreJSON
 from app.widgets.roi_drawer import ROIDrawer
-
+from app.widgets.tools_catalog import ToolCatalogDialog
 try:
     from core.tools.presence_absence import PresenceAbsenceTool
 except Exception:
@@ -158,16 +158,15 @@ class BuilderTab(QtWidgets.QWidget):
         self.list_tools.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
 
         cat = QtWidgets.QHBoxLayout()
-        self.cmb_new = QtWidgets.QComboBox()
-        self.cmb_new.addItems(["Porovnanie s referenciou", "Prítomnosť/Absencia", "YOLO v ROI"])
-        self.btn_add = QtWidgets.QPushButton("Pridať nástroj")
+        self.btn_catalog = QtWidgets.QPushButton("Katalóg nástrojov…")
         self.btn_del = QtWidgets.QPushButton("Odstrániť nástroj")
-        cat.addWidget(self.cmb_new); cat.addWidget(self.btn_add); cat.addWidget(self.btn_del)
+        cat.addWidget(self.btn_catalog); cat.addWidget(self.btn_del)
 
         left.addLayout(hl)
         left.addWidget(QtWidgets.QLabel("Nástroje v recepte:"))
         left.addWidget(self.list_tools, 1)
         left.addLayout(cat)
+
 
         # STRED
         mid = QtWidgets.QVBoxLayout()
@@ -257,7 +256,7 @@ class BuilderTab(QtWidgets.QWidget):
         btn_load.clicked.connect(self.load_recipe)
         btn_save.clicked.connect(self.save_recipe)
         self.list_tools.currentRowChanged.connect(self._on_tool_selected)
-        self.btn_add.clicked.connect(self.add_tool)
+        self.btn_catalog.clicked.connect(self.open_tool_catalog)
         self.btn_del.clicked.connect(self.del_tool)
         self.btn_mode_roi.toggled.connect(self._on_mode_roi)
         self.btn_use_roi.clicked.connect(self.use_drawn_roi)
@@ -508,6 +507,50 @@ class BuilderTab(QtWidgets.QWidget):
 
         self._refresh_tool_list()
         QtWidgets.QMessageBox.information(self, "OK", "Zmeny aplikované. Nezabudni „Uložiť verziu“.")
+        
+    def open_tool_catalog(self):
+        """
+        ELI5: Otvorí katalóg, user vyberie nástroj, my ho vložíme do receptu
+        s rozumnými defaultmi. ROI a masky si potom user doladí v Builderi.
+        """
+        dlg = ToolCatalogDialog(self)
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        tpl = dlg.selected_template()
+        if not tpl:
+            return
+
+        # mapovanie template -> tool dict v recepte
+        new_tool = self._template_to_tool(tpl)
+
+        self.recipe.setdefault("tools", []).append(new_tool)
+        self._refresh_tool_list()
+        self.list_tools.setCurrentRow(self.list_tools.count()-1)
+        QtWidgets.QMessageBox.information(self, "Pridané", f"Nástroj „{tpl.get('title','?')}“ bol pridaný. Nastav ROI/masky a klikni „Použiť zmeny…“, potom „Uložiť verziu“.")
+
+    def _template_to_tool(self, tpl: dict) -> dict:
+        """
+        Z tool šablóny (katalóg) urobí zápis do receptu.
+        Štartovacie ROI dáme malé [0,0,200,200], user si hneď upraví.
+        """
+        typ = tpl.get("type", "diff_from_ref")
+        name = tpl.get("title", "Kontrola")
+        units = tpl.get("units", "px²" if typ=="diff_from_ref" else "ks")
+        params = dict(tpl.get("params", {}) or {})
+
+        # default masky pole, ak náhodou nie je
+        params.setdefault("mask_rects", [])
+
+        tool = {
+            "type": typ,
+            "name": name,
+            "roi_xywh": [0,0,200,200],
+            "params": params,
+            "lsl": None,
+            "usl": 200.0 if typ=="diff_from_ref" else None,
+            "units": units
+        }
+        return tool
 
     # ---------- Auto-teach: OK len ----------
     def run_autoteach_ok_only(self):
