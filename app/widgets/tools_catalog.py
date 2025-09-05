@@ -77,12 +77,30 @@ class ToolCatalogDialog(QtWidgets.QDialog):
         splitter.setStretchFactor(1, 1)
 
         # naplň kategórie
+        def _cat_icon(name: str) -> QtGui.QIcon:
+            # malé 24x24
+            pm = QtGui.QPixmap(24,24); pm.fill(QtCore.Qt.transparent)
+            p = QtGui.QPainter(pm); p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+            name_l = (name or "").lower()
+            if "detek" in name_l:   pen = QtGui.QPen(QtGui.QColor(255,193,7), 3)   # žltá
+            elif "zarovn" in name_l or "pozic" in name_l: pen = QtGui.QPen(QtGui.QColor(33,150,243), 3) # modrá
+            elif "počít" in name_l: pen = QtGui.QPen(QtGui.QColor(0,200,120), 3)  # zelená
+            elif "kód" in name_l or "ocr" in name_l: pen = QtGui.QPen(QtGui.QColor(120,120,255), 3)
+            else: pen = QtGui.QPen(QtGui.QColor(150,150,150), 3)
+            p.setPen(pen); p.drawRect(4,4,16,16); p.end()
+            return QtGui.QIcon(pm)
+
+        self.list_cat.clear()
         for cat in self._categories:
-            it = QtWidgets.QListWidgetItem(cat["title"])
+            it = QtWidgets.QListWidgetItem(_cat_icon(cat["title"]), cat["title"])
             it.setData(QtCore.Qt.UserRole, cat)
             self.list_cat.addItem(it)
+
+        # vyber prvú kategóriu, nech nie je currentItem None
         if self.list_cat.count() > 0:
             self.list_cat.setCurrentRow(0)
+
+
 
         # signály
         self.list_cat.currentItemChanged.connect(self._on_cat_changed)
@@ -93,7 +111,7 @@ class ToolCatalogDialog(QtWidgets.QDialog):
         self.btn_close.clicked.connect(self.reject)
 
 
-        self._on_cat_changed(self.list_cat.currentItem(), None)
+
 
     # --- verejné API ---
     def selected_template(self):
@@ -134,6 +152,74 @@ class ToolCatalogDialog(QtWidgets.QDialog):
         # potvrď výber a zavri dialóg
         self.accept()
 
+    def _make_icon_24(self, painter_fn) -> QtGui.QIcon:
+        pm = QtGui.QPixmap(56, 56)   # väčšia ikonka do gridu
+        pm.fill(QtCore.Qt.transparent)
+        p = QtGui.QPainter(pm)
+        p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        painter_fn(p)
+        p.end()
+        return QtGui.QIcon(pm)
+
+    def _icon_for_tool(self, t: dict) -> QtGui.QIcon:
+        typ = t.get("type","")
+        # perá (farby ako v appke)
+        pen_roi    = QtGui.QPen(QtGui.QColor(33,150,243), 4)    # modrá (ROI/diff)
+        pen_mask   = QtGui.QPen(QtGui.QColor(156,39,176), 4)    # fialová (presence)
+        pen_detect = QtGui.QPen(QtGui.QColor(0,200,120), 4)     # zelená (detekcie / yolo)
+        pen_edge   = QtGui.QPen(QtGui.QColor(255,193,7), 4)     # žltá (edge-trace)
+
+        def ic_diff(p: QtGui.QPainter):
+            p.setPen(pen_roi)
+            p.drawRect(10, 12, 26, 18)
+            p.setPen(QtGui.QPen(QtGui.QColor(255,64,64), 3))
+            p.drawLine(14,16,20,22)  # "rozdiely" červené čiarovky
+            p.drawLine(20,16,14,22)
+            p.drawLine(28,18,34,24)
+
+        def ic_presence(p):
+            p.setPen(pen_mask)
+            p.drawRect(10, 10, 36, 24)
+            p.setPen(QtGui.QPen(QtGui.QColor(0,180,0), 5))
+            # fajka
+            path = QtGui.QPainterPath()
+            path.moveTo(14,26); path.lineTo(22,32); path.lineTo(36,16)
+            p.drawPath(path)
+
+        def ic_yolo(p):
+            p.setPen(pen_detect)
+            p.drawRect(8, 12, 18, 12)
+            p.drawRect(30, 18, 16, 10)
+            p.setPen(QtGui.QPen(QtGui.QColor(0,180,0), 2))
+            p.drawText(12, 38, "YO")
+
+        def ic_line(p):
+            p.setPen(pen_edge); p.drawLine(10, 40, 42, 14)
+
+        def ic_circle(p):
+            p.setPen(pen_edge); p.drawEllipse(12, 12, 32, 32)
+
+        def ic_curve(p):
+            p.setPen(pen_edge)
+            path = QtGui.QPainterPath()
+            path.moveTo(10, 40); path.cubicTo(18,10, 36,46, 46,16)
+            p.drawPath(path)
+
+        # mapovanie type -> ikonka
+        if   typ == "diff_from_ref":       return self._make_icon_24(ic_diff)
+        elif typ == "presence_absence":    return self._make_icon_24(ic_presence)
+        elif typ == "yolo_roi":            return self._make_icon_24(ic_yolo)
+        elif typ == "_wip_edge_line":      return self._make_icon_24(ic_line)
+        elif typ == "_wip_edge_circle":    return self._make_icon_24(ic_circle)
+        elif typ == "_wip_edge_curve":     return self._make_icon_24(ic_curve)
+        else:
+            # default – neutrálna karta
+            def ic_default(p):
+                pen = QtGui.QPen(QtGui.QColor(120,120,120), 3)
+                p.setPen(pen); p.drawRect(12, 12, 32, 24)
+            return self._make_icon_24(ic_default)
+
+
     def _render_tools_list(self, cat: dict, query: str):
         """Vyrenderuje kartičky nástrojov danej kategórie podľa filtra."""
         self.list_tools.clear()
@@ -146,9 +232,8 @@ class ToolCatalogDialog(QtWidgets.QDialog):
                 continue
 
             # ikonka (jednoduchý farebný štvorček)
-            pm = QtGui.QPixmap(56,56)
-            pm.fill(color)
-            icon = QtGui.QIcon(pm)
+            icon = self._icon_for_tool(t)
+
 
             label = title + ("" if t.get("enabled", True) else "  (čoskoro)")
             it = QtWidgets.QListWidgetItem(icon, label)
