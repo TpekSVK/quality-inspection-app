@@ -12,6 +12,8 @@ from core.fixture.template_fixture import TemplateFixture
 from core.tools.diff_from_ref import DiffFromRefTool
 from core.tools.presence_absence import PresenceAbsenceTool
 from core.tools.yolo_roi import YOLOInROITool
+from core.tools.edge_trace import EdgeTraceLineTool, EdgeTraceCircleTool, EdgeTraceCurveTool
+
 
 from interfaces.camera import ICamera
 
@@ -92,6 +94,28 @@ class AppState:
                     params=t.get("params",{}),
                     lsl=t.get("lsl",None), usl=t.get("usl",None), units=t.get("units","count")
                 ))
+            elif typ == "_wip_edge_line":
+                tools.append(EdgeTraceLineTool(
+                    name=t.get("name","Edge line"),
+                    roi_xywh=tuple(t.get("roi_xywh",[0,0,200,200])),
+                    params=t.get("params",{}),
+                    lsl=t.get("lsl",None), usl=t.get("usl",None), units=t.get("units","px")
+                ))
+            elif typ == "_wip_edge_circle":
+                tools.append(EdgeTraceCircleTool(
+                    name=t.get("name","Edge circle"),
+                    roi_xywh=tuple(t.get("roi_xywh",[0,0,200,200])),
+                    params=t.get("params",{}),
+                    lsl=t.get("lsl",None), usl=t.get("usl",None), units=t.get("units","px")
+                ))
+            elif typ == "_wip_edge_curve":
+                tools.append(EdgeTraceCurveTool(
+                    name=t.get("name","Edge curve"),
+                    roi_xywh=tuple(t.get("roi_xywh",[0,0,200,200])),
+                    params=t.get("params",{}),
+                    lsl=t.get("lsl",None), usl=t.get("usl",None), units=t.get("units","px")
+                ))
+
         self.pipeline = Pipeline(tools, fixture=fixture, pxmm=recipe.get("pxmm"))
         self.current_recipe = recipe_name
 

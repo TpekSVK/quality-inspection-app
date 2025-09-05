@@ -1,0 +1,51 @@
+{
+  "meta": {
+    "name": "FORMA_X_PRODUCT_Y"
+  },
+  "reference_image": "recipes\\FORMA_X_PRODUCT_Y\\reference.png",
+  "fixture": {
+    "type": "template",
+    "tpl_xywh": [
+      100,
+      100,
+      200,
+      200
+    ],
+    "min_score": 0.6
+  },
+  "pxmm": null,
+  "tools": [
+    {
+      "type": "_wip_edge_line",
+      "name": "Vada na priamke",
+      "roi_xywh": [
+        206,
+        0,
+        174,
+        351
+      ],
+      "params": {
+        "pts": [
+          [
+            228,
+            332
+          ],
+          [
+            255,
+            10
+          ]
+        ],
+        "shape": "line",
+        "width": 3,
+        "mask_rects": []
+      },
+      "lsl": null,
+      "usl": 200.0,
+      "units": "px"
+    }
+  ],
+  "models": {},
+  "plc": {
+    "recipe_code": 101
+  }
+}

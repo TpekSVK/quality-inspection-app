@@ -348,9 +348,15 @@ class BuilderTab(QtWidgets.QWidget):
         self.list_tools.clear()
         for t in self.recipe.get("tools", []):
             typ = t.get("type","-")
-            sk_typ = {"diff_from_ref":"Porovnanie s referenciou",
-                      "presence_absence":"Prítomnosť/Absencia",
-                      "yolo_roi":"YOLO v ROI"}.get(typ, typ)
+            sk_typ = {
+                "diff_from_ref":"Porovnanie s referenciou",
+                "presence_absence":"Prítomnosť/Absencia",
+                "yolo_roi":"YOLO v ROI",
+                "_wip_edge_line":"Vada na priamke",
+                "_wip_edge_circle":"Vada na kružnici",
+                "_wip_edge_curve":"Vada na krivke",
+            }.get(typ, typ)
+
             nm = t.get("name","Kontrola")
             usl = t.get("usl", None)
             self.list_tools.addItem(f"{sk_typ}  |  {nm}  |  USL={usl}")
@@ -365,9 +371,15 @@ class BuilderTab(QtWidgets.QWidget):
 
         t = self.recipe.get("tools", [])[row]
         typ = t.get("type","-")
-        sk_typ = {"diff_from_ref":"Porovnanie s referenciou",
-                  "presence_absence":"Prítomnosť/Absencia",
-                  "yolo_roi":"YOLO v ROI"}.get(typ, typ)
+        sk_typ = {
+            "diff_from_ref":"Porovnanie s referenciou",
+            "presence_absence":"Prítomnosť/Absencia",
+            "yolo_roi":"YOLO v ROI",
+            "_wip_edge_line":"Vada na priamke",
+            "_wip_edge_circle":"Vada na kružnici",
+            "_wip_edge_curve":"Vada na krivke",
+        }.get(typ, typ)
+
         self.lbl_type.setText(sk_typ)
         self.edit_name.setText(t.get("name","Kontrola A"))
 
