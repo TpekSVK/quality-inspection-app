@@ -19,6 +19,11 @@ try:
     from core.tools.diff_from_ref import DiffFromRefTool
 except Exception:
     DiffFromRefTool = None
+try:
+    from core.tools.edge_trace import EdgeTraceLineTool, EdgeTraceCircleTool, EdgeTraceCurveTool
+except Exception:
+    EdgeTraceLineTool = EdgeTraceCircleTool = EdgeTraceCurveTool = None
+
 
 def _mask_label(idx: int) -> str:
     return f"Maska {idx+1}"
@@ -70,7 +75,8 @@ HELP_TEXTS = {
     ),
 }
 
-PRESETS = {
+# Diff presety (porovnanie s referenciou)
+DIFF_PRESETS = {
     "Plast (matný)":        {"thresh": 35, "morph": 1, "blob": 120, "measure":"area"},
     "Plast (lesklý)":       {"thresh": 45, "morph": 1, "blob": 200, "measure":"area"},
     "Kov (matný)":          {"thresh": 40, "morph": 1, "blob": 150, "measure":"area"},
@@ -79,6 +85,14 @@ PRESETS = {
     "Hrubé vady 1mm+":      {"thresh": 50, "morph": 1, "blob": 500, "measure":"area"},
     "Citlivé (laboratórne)":{"thresh": 25, "morph": 0, "blob": 60,  "measure":"area"},
 }
+
+# Edge-trace presety (čiara/kružnica/krivka)
+EDGE_PRESETS = {
+    "Hrany – mäkké":     {"canny_lo": 20, "canny_hi":  80, "width": 5, "metric": "coverage_pct"},
+    "Hrany – štandard":  {"canny_lo": 40, "canny_hi": 120, "width": 3, "metric": "coverage_pct"},
+    "Hrany – agresívne": {"canny_lo": 60, "canny_hi": 180, "width": 2, "metric": "px_gap"},
+}
+
 
 class BuilderTab(QtWidgets.QWidget):
     """
@@ -238,9 +252,9 @@ class BuilderTab(QtWidgets.QWidget):
         self.edit_name = QtWidgets.QLineEdit("Kontrola A")
 
         # Presety
-        self.cmb_preset = QtWidgets.QComboBox()
-        self.cmb_preset.addItems(list(PRESETS.keys()))
+        self.cmb_preset = QtWidgets.QComboBox()   # položky doplníme podľa typu nástroja
         self.btn_preset = QtWidgets.QPushButton("Použiť predvoľbu")
+
 
         # Parametre (SLK)
         self.spin_thresh = QtWidgets.QSpinBox(); self.spin_thresh.setRange(0,255); self.spin_thresh.setValue(35); self.spin_thresh.setObjectName("thresh")
@@ -272,6 +286,8 @@ class BuilderTab(QtWidgets.QWidget):
         self.spin_canny_lo = QtWidgets.QSpinBox(); self.spin_canny_lo.setRange(0,255); self.spin_canny_lo.setValue(40)
         self.spin_canny_hi = QtWidgets.QSpinBox(); self.spin_canny_hi.setRange(0,255); self.spin_canny_hi.setValue(120)
         self.cmb_metric = QtWidgets.QComboBox(); self.cmb_metric.addItems(["px_gap (menej=lepšie)", "coverage_pct (viac=lepšie)"])
+        self.cmb_metric.currentIndexChanged.connect(self._on_metric_changed)
+
         self.grp_edge.setToolTip("Parametre vyhodnocovania hrán v páse okolo nakreslenej čiary/kruhu/krivky.")
         g_edge.addRow("Canny low:", self.spin_canny_lo)
         g_edge.addRow("Canny high:", self.spin_canny_hi)
@@ -586,6 +602,11 @@ class BuilderTab(QtWidgets.QWidget):
         self.spin_canny_hi.setValue(int(params.get("canny_hi", 120)))
         metric = str(params.get("metric", "px_gap")).lower()
         self.cmb_metric.setCurrentText("coverage_pct (viac=lepšie)" if metric=="coverage_pct" else "px_gap (menej=lepšie)")
+        # prepnime aj jednotky
+        if metric == "coverage_pct":
+            self.edit_units.setText("%")
+        elif self.edit_units.text().strip() == "%":
+            self.edit_units.setText("px")
 
         # --- Presence/Absence ---
         self.dbl_minScore.setValue(float(params.get("minScore", 0.70)))
@@ -600,14 +621,55 @@ class BuilderTab(QtWidgets.QWidget):
 
 
         is_diff = (typ == "diff_from_ref")
-        # Parametrove polia a autoteach len pre diff
-        for w in (self.spin_thresh, self.spin_morph, self.spin_blob, self.cmb_measure,
-                  self.cmb_preset, self.btn_preset,
-                  self.btn_autoteach, self.btn_autoteach_both):
+        is_edge = self._supports_shape(typ)
+
+        # Diff-only polia
+        for w in (self.spin_thresh, self.spin_morph, self.spin_blob, self.cmb_measure):
             w.setEnabled(is_diff)
+
+        # Presety a Auto-teach: povoliť pre diff aj edge
+        for w in (self.cmb_preset, self.btn_preset, self.btn_autoteach, self.btn_autoteach_both):
+            w.setEnabled(is_diff or is_edge)
+
+        # Naplň zoznam presetov podľa typu
+        self._load_presets_for_type(typ)
+
 
         # Maskovacie ovládanie je osobitne (pre diff + presence_absence + yolo_roi)
         self._update_mask_buttons()
+
+    def _load_presets_for_type(self, typ: str):
+        """Naplní combo Predvoľba podľa typu nástroja."""
+        self.cmb_preset.clear()
+        if (typ or "").lower() in {"_wip_edge_line", "_wip_edge_circle", "_wip_edge_curve"}:
+            self.cmb_preset.addItems(list(EDGE_PRESETS.keys()))
+        else:
+            self.cmb_preset.addItems(list(DIFF_PRESETS.keys()))
+
+    def _apply_edge_preset(self, p: dict):
+        """Aplikuje edge preset do UI (bez potreby hneď klikať Použiť zmeny)."""
+        if not p: return
+        self.spin_canny_lo.setValue(int(p.get("canny_lo", 40)))
+        self.spin_canny_hi.setValue(int(p.get("canny_hi", 120)))
+        self.spin_width.setValue(int(p.get("width", 3)))
+        met = str(p.get("metric", "coverage_pct")).lower()
+        self.cmb_metric.setCurrentText("coverage_pct (viac=lepšie)" if met=="coverage_pct" else "px_gap (menej=lepšie)")
+        # jednotky podľa metriky
+        if met == "coverage_pct" and self.edit_units.text().strip() != "%":
+            self.edit_units.setText("%")
+        elif met != "coverage_pct" and self.edit_units.text().strip() == "%":
+            self.edit_units.setText("px")
+
+    def _on_metric_changed(self, *_):
+        """Keď užívateľ prepne metriku edge-trace, prepneme aj jednotky."""
+        txt = self.cmb_metric.currentText().lower()
+        if "coverage_pct" in txt:
+            if self.edit_units.text().strip() != "%":
+                self.edit_units.setText("%")
+        else:
+            if self.edit_units.text().strip() == "%":
+                self.edit_units.setText("px")
+
 
     def _supports_shape(self, typ: str) -> bool:
         return (typ or "").lower() in {"_wip_edge_line", "_wip_edge_circle", "_wip_edge_curve"}
@@ -790,13 +852,20 @@ class BuilderTab(QtWidgets.QWidget):
 
     def apply_preset(self):
         name = self.cmb_preset.currentText()
-        p = PRESETS.get(name)
-        if not p: return
-        self.spin_thresh.setValue(p["thresh"])
-        self.spin_morph.setValue(p["morph"])
-        self.spin_blob.setValue(p["blob"])
-        self.cmb_measure.setCurrentText("Plocha vád (px²)" if p["measure"]=="area" else "Počet vád")
+        typ = (self._active_tool_type() or "").lower()
+        if typ in {"_wip_edge_line", "_wip_edge_circle", "_wip_edge_curve"}:
+            p = EDGE_PRESETS.get(name)
+            if not p: return
+            self._apply_edge_preset(p)
+        else:
+            p = DIFF_PRESETS.get(name)
+            if not p: return
+            self.spin_thresh.setValue(p["thresh"])
+            self.spin_morph.setValue(p["morph"])
+            self.spin_blob.setValue(p["blob"])
+            self.cmb_measure.setCurrentText("Plocha vád (px²)" if p["measure"]=="area" else "Počet vád")
         self.help_box.setPlainText(HELP_TEXTS["preset"])
+
 
     def add_tool(self):
         label = self.cmb_new.currentText()
@@ -951,29 +1020,91 @@ class BuilderTab(QtWidgets.QWidget):
             return
         ref = cv.imread(ref_path, cv.IMREAD_GRAYSCALE)
         t = self.recipe["tools"][idx]
-        from core.tools.diff_from_ref import DiffFromRefTool
-        tool = DiffFromRefTool(
-            name=t.get("name","Kontrola"),
-            roi_xywh=tuple(t.get("roi_xywh",[0,0,200,200])),
-            params=t.get("params",{}),
-            lsl=t.get("lsl"), usl=t.get("usl"),
-            units=t.get("units","px²")
-        )
-        vals=[]
-        imgs = sorted(list(ok_dir.glob("*.png")) + list(ok_dir.glob("*.jpg")) + list(ok_dir.glob("*.bmp")))
-        for pth in imgs:
-            cur = cv.imread(str(pth), cv.IMREAD_GRAYSCALE)
-            if cur is None: continue
-            r = tool.run(ref, cur, fixture_transform=None)
-            vals.append(float(r.measured))
-        if not vals:
-            QtWidgets.QMessageBox.warning(self, "Auto-teach", "Nenašiel som použiteľné OK snímky.")
+        typ = (t.get("type","") or "").lower()
+        params = dict(t.get("params",{}) or {})
+        roi = tuple(t.get("roi_xywh",[0,0,200,200]))
+
+        # --- DIFF --------------------------------------------------------
+        if typ == "diff_from_ref":
+            from core.tools.diff_from_ref import DiffFromRefTool
+            tool = DiffFromRefTool(name=t.get("name","Kontrola"), roi_xywh=roi,
+                                params=params, lsl=t.get("lsl"), usl=t.get("usl"),
+                                units=t.get("units","px²"))
+            vals=[]
+            imgs = sorted(list(ok_dir.glob("*.png")) + list(ok_dir.glob("*.jpg")) + list(ok_dir.glob("*.bmp")))
+            for pth in imgs:
+                cur = cv.imread(str(pth), cv.IMREAD_GRAYSCALE)
+                if cur is None: continue
+                r = tool.run(ref, cur, fixture_transform=None)
+                vals.append(float(r.measured))
+            if not vals:
+                QtWidgets.QMessageBox.warning(self, "Auto-teach", "Nenašiel som použiteľné OK snímky.")
+                return
+            vals = np.array(vals, dtype=float)
+            perc = 100.0 * (1.0 - float(self.spin_fpr.value()))
+            usl = float(np.percentile(vals, perc))
+            self.dbl_usl.setValue(usl)
+            QtWidgets.QMessageBox.information(self, "Auto-teach", f"USL = {usl:.2f} (len OK, FPR≈{float(self.spin_fpr.value()):.4f}). Klikni „Použiť zmeny“ a potom „Uložiť verziu“.")
             return
-        vals = np.array(vals, dtype=float)
-        perc = 100.0 * (1.0 - float(self.spin_fpr.value()))
-        usl = float(np.percentile(vals, perc))
-        self.dbl_usl.setValue(usl)
-        QtWidgets.QMessageBox.information(self, "Auto-teach", f"USL = {usl:.2f} (len OK, FPR≈{float(self.spin_fpr.value()):.4f}). Klikni „Použiť zmeny“ a potom „Uložiť verziu“.")
+
+        # --- EDGE-TRACE --------------------------------------------------
+        if typ in {"_wip_edge_line","_wip_edge_circle","_wip_edge_curve"}:
+            # instance správneho edge toolu
+            cls_map = {
+                "_wip_edge_line": EdgeTraceLineTool,
+                "_wip_edge_circle": EdgeTraceCircleTool,
+                "_wip_edge_curve": EdgeTraceCurveTool,
+            }
+            ToolCls = cls_map.get(typ)
+            if ToolCls is None:
+                QtWidgets.QMessageBox.warning(self, "Auto-teach", "Edge nástroj nie je dostupný.")
+                return
+
+            # použijeme aktuálne UI hodnoty (ak ich user menil a ešte nestlačil „Použiť zmeny“)
+            params = dict(params)
+            params["canny_lo"] = int(self.spin_canny_lo.value())
+            params["canny_hi"] = int(self.spin_canny_hi.value())
+            params["width"]    = int(self.spin_width.value())
+            params["metric"]   = "coverage_pct" if self.cmb_metric.currentText().startswith("coverage") else "px_gap"
+
+            tool = ToolCls(name=t.get("name","Edge"), roi_xywh=roi, params=params,
+                        lsl=t.get("lsl"), usl=t.get("usl"),
+                        units=t.get("units","% " if params["metric"]=="coverage_pct" else "px"))
+
+            vals=[]
+            imgs = sorted(list(ok_dir.glob("*.png")) + list(ok_dir.glob("*.jpg")) + list(ok_dir.glob("*.bmp")))
+            for pth in imgs:
+                cur = cv.imread(str(pth), cv.IMREAD_GRAYSCALE)
+                if cur is None: continue
+                r = tool.run(ref, cur, fixture_transform=None)
+                vals.append(float(r.measured))
+            if not vals:
+                QtWidgets.QMessageBox.warning(self, "Auto-teach", "Nenašiel som použiteľné OK snímky.")
+                return
+
+            vals = np.array(vals, dtype=float)
+            metric = params["metric"]
+            if metric == "px_gap":
+                # menšie lepšie → nastavíme USL na (1-FPR) percentil
+                perc = 100.0 * (1.0 - float(self.spin_fpr.value()))
+                usl = float(np.percentile(vals, perc))
+                self.dbl_lsl.setValue(0.0)              # typicky None, ale necháme 0
+                self.dbl_usl.setValue(usl)
+                if self.edit_units.text().strip() == "%":
+                    self.edit_units.setText("px")
+                QtWidgets.QMessageBox.information(self, "Auto-teach (edge, OK)", f"USL = {usl:.2f} (FPR≈{float(self.spin_fpr.value()):.4f}).")
+            else:
+                # coverage_pct → väčšie lepšie → nastavíme LSL na FPR percentil
+                perc = 100.0 * float(self.spin_fpr.value())
+                lsl = float(np.percentile(vals, perc))
+                self.dbl_lsl.setValue(lsl)
+                self.dbl_usl.setValue(1e9)              # alebo None; necháme veľké číslo
+                self.edit_units.setText("%")
+                QtWidgets.QMessageBox.information(self, "Auto-teach (edge, OK)", f"LSL = {lsl:.2f}% (FPR≈{float(self.spin_fpr.value()):.4f}).")
+            return
+
+        # iné typy – zatiaľ nepodporujeme OK-only auto-teach
+        QtWidgets.QMessageBox.information(self, "Auto-teach", "Auto-teach je zatiaľ pre Porovnanie s referenciou a Edge nástroje.")
 
     # ---------- Auto-teach: OK + NOK ----------
     def run_autoteach_ok_nok(self):
@@ -998,31 +1129,65 @@ class BuilderTab(QtWidgets.QWidget):
             return
         ref = cv.imread(ref_path, cv.IMREAD_GRAYSCALE)
         t = self.recipe["tools"][idx]
-        if t.get("type") != "diff_from_ref":
-            QtWidgets.QMessageBox.warning(self, "Auto-teach", "OK+NOK prahovanie má zmysel pre Porovnanie s referenciou.")
+        typ = (t.get("type") or "").lower()
+
+        ref_path = self.recipe.get("reference_image", None)
+        if not ref_path or not Path(ref_path).exists():
+            QtWidgets.QMessageBox.warning(self, "Auto-teach", "Chýba referenčný obrázok v recepte.")
             return
+        ref = cv.imread(ref_path, cv.IMREAD_GRAYSCALE)
 
-        from core.tools.diff_from_ref import DiffFromRefTool
-        tool = DiffFromRefTool(
-            name=t.get("name","Kontrola"),
-            roi_xywh=tuple(t.get("roi_xywh",[0,0,200,200])),
-            params=t.get("params",{}),
-            lsl=t.get("lsl"), usl=t.get("usl"),
-            units=t.get("units","px²")
-        )
-
-        def load_vals(d: Path):
+        # --- helper na načítanie meraní pre ľubovoľný tool ---
+        def measure_all(tool_factory, d: Path):
             imgs = sorted(list(d.glob("*.png")) + list(d.glob("*.jpg")) + list(d.glob("*.bmp")))
             out=[]
             for p in imgs:
                 cur = cv.imread(str(p), cv.IMREAD_GRAYSCALE)
                 if cur is None: continue
-                r = tool.run(ref, cur, fixture_transform=None)
+                r = tool_factory().run(ref, cur, fixture_transform=None)
                 out.append(float(r.measured))
             return np.array(out, dtype=float)
 
-        m_ok  = load_vals(ok_dir)
-        m_nok = load_vals(nok_dir)
+        roi = tuple(t.get("roi_xywh",[0,0,200,200]))
+        params = dict(t.get("params",{}) or {})
+
+        if typ == "diff_from_ref":
+            from core.tools.diff_from_ref import DiffFromRefTool
+            def make_diff():
+                return DiffFromRefTool(name=t.get("name","Kontrola"), roi_xywh=roi,
+                                    params=params, lsl=t.get("lsl"), usl=t.get("usl"),
+                                    units=t.get("units","px²"))
+            m_ok  = measure_all(lambda: make_diff(), ok_dir)
+            m_nok = measure_all(lambda: make_diff(), nok_dir)
+            larger_is_worse = True   # viac plochy vád = horšie
+            metric_name = "diff"
+        elif typ in {"_wip_edge_line","_wip_edge_circle","_wip_edge_curve"}:
+            cls_map = {
+                "_wip_edge_line": EdgeTraceLineTool,
+                "_wip_edge_circle": EdgeTraceCircleTool,
+                "_wip_edge_curve": EdgeTraceCurveTool,
+            }
+            ToolCls = cls_map.get(typ)
+            if ToolCls is None:
+                QtWidgets.QMessageBox.warning(self, "Auto-teach", "Edge nástroj nie je dostupný.")
+                return
+            # override param z UI
+            params["canny_lo"] = int(self.spin_canny_lo.value())
+            params["canny_hi"] = int(self.spin_canny_hi.value())
+            params["width"]    = int(self.spin_width.value())
+            params["metric"]   = "coverage_pct" if self.cmb_metric.currentText().startswith("coverage") else "px_gap"
+            def make_edge():
+                return ToolCls(name=t.get("name","Edge"), roi_xywh=roi, params=params,
+                            lsl=t.get("lsl"), usl=t.get("usl"),
+                            units=t.get("units","% " if params["metric"]=="coverage_pct" else "px"))
+            m_ok  = measure_all(lambda: make_edge(), ok_dir)
+            m_nok = measure_all(lambda: make_edge(), nok_dir)
+            # pre klasifikáciu:
+            larger_is_worse = (params["metric"] == "px_gap")   # gap: viac = horšie; coverage: menej = horšie
+            metric_name = params["metric"]
+        else:
+            QtWidgets.QMessageBox.information(self, "Auto-teach", "OK+NOK auto-teach je zatiaľ pre diff a edge.")
+            return
 
         if m_ok.size == 0:
             QtWidgets.QMessageBox.warning(self, "Auto-teach", "OK dataset prázdny.")
@@ -1031,50 +1196,54 @@ class BuilderTab(QtWidgets.QWidget):
             QtWidgets.QMessageBox.information(self, "Auto-teach", "NOK dataset prázdny – použijem OK-only.")
             return self.run_autoteach_ok_only()
 
-        # Kandidátne prahy – spájame a triedime
+        # Kandidátne prahy
         candidates = np.unique(np.concatenate([m_ok, m_nok]))
-        if candidates.size > 2000:  # zrýchlenie: sub-sampling
+        if candidates.size > 2000:
             candidates = np.linspace(candidates.min(), candidates.max(), 2000)
 
-        # Optimalizácia prahu
-        target_fpr = float(self.spin_fpr.value())  # horný limit FPR
-        best = None
-        best_key = None  # tuple pre triedenie (primárne FPR<=target, max J; sekundárne max TPR)
-        n_ok  = m_ok.size
-        n_nok = m_nok.size
+        target_fpr = float(self.spin_fpr.value())
+        best = None; best_key=None
+        n_ok, n_nok = m_ok.size, m_nok.size
 
-        for tval in candidates:
-            # „vyššie horšie“ → prah je USL: NOK ak m > t
-            tp = np.sum(m_nok > tval)   # správne chytené NOK
-            fn = np.sum(m_nok <= tval)  # nechytené NOK
-            fp = np.sum(m_ok  > tval)   # falošné poplachy
-            tn = np.sum(m_ok  <= tval)
-
-            tpr = tp / n_nok if n_nok else 0.0   # citlivosť
-            fpr = fp / n_ok  if n_ok  else 0.0
-            tnr = 1.0 - fpr
-            J   = tpr + tnr - 1.0
-
-            # Primárne chceme držať fpr <= target; potom max J; ako sekundárne max tpr
-            key = None
-            if fpr <= target_fpr:
-                key = (0, -J, -tpr)    # 0 = OK (spĺňa limit), potom max J, max TPR
+        for thr in candidates:
+            if larger_is_worse:
+                # NOK ak m > thr
+                tp = np.sum(m_nok > thr); fn = np.sum(m_nok <= thr)
+                fp = np.sum(m_ok  > thr); tn = np.sum(m_ok  <= thr)
             else:
-                key = (1, fpr, -J)     # 1 = penalizácia (nespĺňa), minimalizuj FPR potom max J
+                # NOK ak m < thr
+                tp = np.sum(m_nok < thr); fn = np.sum(m_nok >= thr)
+                fp = np.sum(m_ok  < thr); tn = np.sum(m_ok  >= thr)
 
+            tpr = tp/n_nok if n_nok else 0.0
+            fpr = fp/n_ok  if n_ok  else 0.0
+            tnr = 1.0 - fpr
+            J = tpr + tnr - 1.0
+
+            if fpr <= target_fpr:
+                key = (0, -J, -tpr)
+            else:
+                key = (1, fpr, -J)
             if best_key is None or key < best_key:
-                best_key = key
-                best = (tval, tpr, fpr, J)
+                best_key = key; best = (thr, tpr, fpr, J)
 
         if best is None:
             QtWidgets.QMessageBox.warning(self, "Auto-teach", "Nepodarilo sa nájsť prah.")
             return
 
-        usl, tpr, fpr, J = best
-        self.dbl_usl.setValue(float(usl))
+        thr, tpr, fpr, J = best
+
+        # Zapíš do LSL/USL podľa smeru metriky
+        if typ == "diff_from_ref" or (typ.startswith("_wip_edge_") and larger_is_worse):
+            # vyššie horšie → USL
+            self.dbl_usl.setValue(float(thr))
+        else:
+            # nižšie horšie → LSL
+            self.dbl_lsl.setValue(float(thr))
+
         QtWidgets.QMessageBox.information(
-            self, "Auto-teach (OK+NOK)",
-            f"USL = {usl:.2f}\n"
+            self, f"Auto-teach (OK+NOK, {metric_name})",
+            f"Prahová hodnota = {thr:.2f}\n"
             f"TPR (zachytenie NOK) = {tpr*100:.1f} %\n"
             f"FPR (falošné OK→NOK) = {fpr*100:.2f} %\n"
             f"J = {J:.3f}\n\n"
