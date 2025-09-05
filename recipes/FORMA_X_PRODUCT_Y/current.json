@@ -16,50 +16,35 @@
   "pxmm": null,
   "tools": [
     {
-      "type": "diff_from_ref",
-      "name": "Počet vád",
+      "type": "_wip_edge_line",
+      "name": "Vada na priamke",
       "roi_xywh": [
-        260,
-        149,
-        113,
-        107
+        389,
+        304,
+        1,
+        1
       ],
       "params": {
-        "blur": 3,
-        "mask_rects": [
+        "pts": [
           [
-            34,
-            110,
-            150,
-            136
+            312,
+            31
           ],
           [
-            409,
-            112,
-            95,
-            116
-          ],
-          [
-            160,
-            18,
-            129,
-            63
-          ],
-          [
-            382,
-            278,
-            55,
-            44
+            299,
+            211
           ]
         ],
-        "measure": "count",
-        "min_blob_area": 120,
-        "morph_open": 1,
-        "thresh": 40
+        "shape": "line",
+        "width": 3,
+        "mask_rects": [],
+        "cx": 270,
+        "cy": 295,
+        "r": 23
       },
       "lsl": null,
-      "usl": 3.0,
-      "units": "ks"
+      "usl": 200.0,
+      "units": "px"
     }
   ],
   "models": {},

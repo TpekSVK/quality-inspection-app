@@ -127,6 +127,7 @@ class ToolCatalogDialog(QtWidgets.QDialog):
           "enabled": True|False         # False = zatiaľ len v náhľade (čoskoro)
         }
         """
+
         defect_tools = [
             {
                 "id":"defect_area",
@@ -139,11 +140,29 @@ class ToolCatalogDialog(QtWidgets.QDialog):
             },
             {
                 "id":"defect_count",
-                "title":"Počet vád",
+                "title":"Počet vád (bloby)",
                 "type":"diff_from_ref",
                 "params":{"blur":3, "thresh":40, "morph_open":1, "min_blob_area":120, "measure":"count", "mask_rects":[]},
                 "units":"ks",
-                "desc":"Porovnanie s referenciou + prahovanie. Výstup: počet defektov (bloby).",
+                "desc":"Porovnanie s referenciou + prahovanie. Výstup: počet vád ako počet blobov.",
+                "enabled": True
+            },
+            {
+                "id":"defect_black_white_area",
+                "title":"Celková plocha čierna/biela",
+                "type":"diff_from_ref",
+                "params":{"blur":3, "thresh":45, "morph_open":1, "min_blob_area":150, "measure":"area", "mask_rects":[]},
+                "units":"px²",
+                "desc":"Variant pre veľmi tmavé/svetlé vady. Východzí prah 45, vhodný na lesklejšie/kontrastné povrchy.",
+                "enabled": True
+            },
+            {
+                "id":"defect_vs_background",
+                "title":"Vada odlišná od pozadia",
+                "type":"diff_from_ref",
+                "params":{"blur":5, "thresh":35, "morph_open":1, "min_blob_area":120, "measure":"area", "mask_rects":[]},
+                "units":"px²",
+                "desc":"Citlivejšie na šum pozadia – mierne väčšie rozmazanie (blur=5) pred porovnaním.",
                 "enabled": True
             },
             {
@@ -152,29 +171,40 @@ class ToolCatalogDialog(QtWidgets.QDialog):
                 "type":"yolo_roi",
                 "params":{"mask_rects":[]},
                 "units":"ks",
-                "desc":"Detekcia známych typov chýb alebo cudzích predmetov len v definovaných ROI. Vyžaduje natrénovaný model.",
+                "desc":"Detekcia známych typov chýb alebo cudzích predmetov len v definovaných ROI. Vyžaduje natrénovaný model (ONNX).",
                 "enabled": True
             },
-            # ukážka 'čoskoro' položiek – vypnuté, aby nič nerozbili:
+            # ---- príprava na nové kreslenia (WIP) ----
             {
                 "id":"defect_on_line",
                 "title":"Vada na priamke",
                 "type":"_wip_edge_line",
-                "params":{},
+                "params":{"shape":"line","pts":[[10,10],[100,10]],"width":3},
                 "units":"px",
-                "desc":"Zachytenie narušenia pozdĺž definovanej priamky (napr. hrana musí byť súvislá). Čoskoro.",
-                "enabled": False
+                "desc":"Kontrola súvislosti pozdĺž čiary (napr. či hrana nie je prerušená). Potrebuje kreslenie čiary v ROI.",
+                "enabled": True
             },
             {
                 "id":"defect_on_circle",
                 "title":"Vada na kružnici",
                 "type":"_wip_edge_circle",
-                "params":{},
+                "params":{"shape":"circle","cx":80,"cy":80,"r":60,"width":3},
                 "units":"px",
-                "desc":"Kontrola defektov po kružnici (napr. trhlina v obvode). Čoskoro.",
-                "enabled": False
+                "desc":"Kontrola defektov po obvode. Potrebuje kreslenie kružnice v ROI.",
+                "enabled": True
             },
+            {
+                "id":"defect_on_curve",
+                "title":"Vada na krivke",
+                "type":"_wip_edge_curve",
+                "params":{"shape":"polyline","pts":[[10,10],[40,30],[90,60]],"width":3},
+                "units":"px",
+                "desc":"Kontrola pozdĺž ľubovoľnej krivky (polyline). Potrebuje kreslenie lomenej čiary v ROI.",
+                "enabled": True
+            },
+
         ]
+
 
         presence_tools = [
             {

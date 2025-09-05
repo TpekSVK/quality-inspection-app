@@ -172,10 +172,24 @@ class BuilderTab(QtWidgets.QWidget):
         mid = QtWidgets.QVBoxLayout()
         self.roi_view = ROIDrawer()
         mode_bar = QtWidgets.QHBoxLayout()
-        self.btn_mode_roi = QtWidgets.QRadioButton("Režim ROI (modrá)")
-        self.btn_mode_mask = QtWidgets.QRadioButton("Režim maska – ignorovať (fialová)")
+        self.btn_mode_roi = QtWidgets.QRadioButton("ROI (modrá)")
+        self.btn_mode_mask = QtWidgets.QRadioButton("Maska (fialová)")
+        self.btn_mode_line = QtWidgets.QRadioButton("Čiara")
+        self.btn_mode_circle = QtWidgets.QRadioButton("Kružnica")
+        self.btn_mode_poly = QtWidgets.QRadioButton("Krivka")
+
         self.btn_mode_roi.setChecked(True)
-        mode_bar.addWidget(self.btn_mode_roi); mode_bar.addWidget(self.btn_mode_mask)
+        for b in (self.btn_mode_roi, self.btn_mode_mask, self.btn_mode_line, self.btn_mode_circle, self.btn_mode_poly):
+            mode_bar.addWidget(b)
+        mode_bar.addStretch(1)
+
+        # šírka profilu (pre line/circle/polyline)
+        self.spin_width = QtWidgets.QSpinBox()
+        self.spin_width.setRange(1, 50)
+        self.spin_width.setValue(3)
+        mode_bar.addWidget(QtWidgets.QLabel("Šírka profilu:"))
+        mode_bar.addWidget(self.spin_width)
+
 
         self.btn_use_roi = QtWidgets.QPushButton("Použiť aktuálne nakreslené ROI")
         mid.addWidget(self.roi_view, 1)
@@ -259,10 +273,19 @@ class BuilderTab(QtWidgets.QWidget):
         self.btn_catalog.clicked.connect(self.open_tool_catalog)
         self.btn_del.clicked.connect(self.del_tool)
         self.btn_mode_roi.toggled.connect(self._on_mode_roi)
+        self.btn_mode_mask.toggled.connect(self._on_mode_mask)
+        self.btn_mode_line.toggled.connect(self._on_mode_line)
+        self.btn_mode_circle.toggled.connect(self._on_mode_circle)
+        self.btn_mode_poly.toggled.connect(self._on_mode_poly)
+
+        self.spin_width.valueChanged.connect(self._on_width_changed)
+        self.roi_view.shapeChanged.connect(self._on_shape_changed)
+
         self.btn_use_roi.clicked.connect(self.use_drawn_roi)
         self.btn_add_mask.clicked.connect(self.add_mask_from_drawn)
         self.btn_del_mask.clicked.connect(self.delete_selected_mask)
         self.btn_clear_masks.clicked.connect(self.clear_masks)
+
         self.list_masks.itemSelectionChanged.connect(self._on_mask_selected)
         self.list_masks.itemSelectionChanged.connect(self._update_mask_buttons)  # update stavov
         self.roi_view.maskAdded.connect(lambda *_: (self._refresh_mask_list(), self._update_mask_buttons()))
@@ -356,6 +379,34 @@ class BuilderTab(QtWidgets.QWidget):
         self.roi_view.set_masks(masks)
         self._refresh_mask_list()
 
+        # --- prepni kresliaci mód podľa typu nástroja ---
+        if self._tool_needs_shape(typ):
+            if typ == "_wip_edge_line":
+                self.btn_mode_line.setChecked(True)
+            elif typ == "_wip_edge_circle":
+                self.btn_mode_circle.setChecked(True)
+            elif typ == "_wip_edge_curve":
+                self.btn_mode_poly.setChecked(True)
+        else:
+            self.btn_mode_roi.setChecked(True)
+
+        # --- ak má nástroj shape parametre, zobraz ich v kresliacom widgete ---
+        shape_dict = None
+        if params.get("shape") == "line":
+            shape_dict = {"shape":"line", "pts": params.get("pts", []), "width": params.get("width", self.spin_width.value())}
+        elif params.get("shape") == "circle":
+            shape_dict = {"shape":"circle", "cx": params.get("cx"), "cy": params.get("cy"), "r": params.get("r", 1), "width": params.get("width", self.spin_width.value())}
+        elif params.get("shape") == "polyline":
+            shape_dict = {"shape":"polyline", "pts": params.get("pts", []), "width": params.get("width", self.spin_width.value())}
+        self.roi_view.set_shape(shape_dict)
+        if shape_dict and "width" in shape_dict:
+            try:
+                self.spin_width.blockSignals(True)
+                self.spin_width.setValue(int(shape_dict["width"]))
+            finally:
+                self.spin_width.blockSignals(False)
+
+
         # Metrológia
         self.dbl_lsl.setValue(t.get("lsl", 0.0) if t.get("lsl") is not None else 0.0)
         self.dbl_usl.setValue(t.get("usl", 200.0) if t.get("usl") is not None else 200.0)
@@ -380,6 +431,63 @@ class BuilderTab(QtWidgets.QWidget):
     def _on_mode_roi(self, checked: bool):
         self.roi_view.set_mode("roi" if checked else "mask")
         self.help_box.setPlainText(HELP_TEXTS["roi" if checked else "masks"])
+
+    def _on_mode_mask(self, checked: bool):
+        if checked:
+            self.roi_view.set_mode("mask")
+            self.help_box.setPlainText(HELP_TEXTS["masks"])
+
+    def _on_mode_line(self, checked: bool):
+        if checked:
+            self.roi_view.set_mode("line")
+            self.help_box.setPlainText("Režim ČIARA: klikni začiatok, potiahni a pusti. Dĺžka a poloha definujú trasu kontroly.")
+
+    def _on_mode_circle(self, checked: bool):
+        if checked:
+            self.roi_view.set_mode("circle")
+            self.help_box.setPlainText("Režim KRUŽNICA: klikni stred, potiahni na polomer a pusti. Kontrola prebieha po obvode.")
+
+    def _on_mode_poly(self, checked: bool):
+        if checked:
+            self.roi_view.set_mode("polyline")
+            self.help_box.setPlainText("Režim KRIVKA: klikaj body lomenej čiary, dvojklik ukončí, pravý klik vráti posledný bod.")
+
+    def _on_width_changed(self, v: int):
+        self.roi_view.set_stroke_width(int(v))
+        # ak máme aktuálny shape-typ tool, priebežne aktualizuj width v parametri nástroja
+        idx = self.current_tool_idx
+        if idx is None or idx < 0: return
+        t = self.recipe.get("tools", [])[idx]
+        if self._tool_needs_shape(t.get("type","")):
+            t.setdefault("params", {})
+            t["params"]["width"] = int(v)
+
+    def _on_shape_changed(self, shape: dict):
+        """Z ROIDrawer-u pri dokončení kresby: uloží shape do params vybraného nástroja."""
+        idx = self.current_tool_idx
+        if idx is None or idx < 0: return
+        t = self.recipe["tools"][idx]
+        if not self._tool_needs_shape(t.get("type","")):
+            return
+        p = t.setdefault("params", {})
+        s = (shape or {}).copy()
+        kind = s.get("shape")
+        if kind == "line":
+            p["shape"] = "line"
+            p["pts"] = s.get("pts", [])
+            p["width"] = s.get("width", self.spin_width.value())
+        elif kind == "circle":
+            p["shape"] = "circle"
+            p["cx"] = s.get("cx"); p["cy"] = s.get("cy"); p["r"] = s.get("r", 1)
+            p["width"] = s.get("width", self.spin_width.value())
+        elif kind == "polyline":
+            p["shape"] = "polyline"
+            p["pts"] = s.get("pts", [])
+            p["width"] = s.get("width", self.spin_width.value())
+
+    def _tool_needs_shape(self, typ: str) -> bool:
+        return typ in {"_wip_edge_line", "_wip_edge_circle", "_wip_edge_curve"}
+
 
     def _on_mask_selected(self):
         idx = self.list_masks.currentRow()
@@ -507,7 +615,7 @@ class BuilderTab(QtWidgets.QWidget):
 
         self._refresh_tool_list()
         QtWidgets.QMessageBox.information(self, "OK", "Zmeny aplikované. Nezabudni „Uložiť verziu“.")
-        
+
     def open_tool_catalog(self):
         """
         ELI5: Otvorí katalóg, user vyberie nástroj, my ho vložíme do receptu
