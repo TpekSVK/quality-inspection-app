@@ -5,9 +5,30 @@ import numpy as np
 
 from app.widgets.image_view import ImageView
 from app.widgets.filmstrip_widget import FilmstripWidget
+from app.widgets.live_tuning import LiveTuningPanel
 from qcio.plc.plc_qt_controller import PLCQtController
 from storage.dataset_store import save_ok, save_nok
 from storage.recipe_store_json import RecipeStoreJSON
+# Robustné rozpoznanie typu nástroja v RUN (pre Live tuning)
+try:
+    from core.tools.diff_from_ref import DiffFromRefTool
+except Exception:
+    DiffFromRefTool = None
+
+try:
+    from core.tools.edge_trace import EdgeTraceLineTool, EdgeTraceCircleTool, EdgeTraceCurveTool
+except Exception:
+    EdgeTraceLineTool = EdgeTraceCircleTool = EdgeTraceCurveTool = None
+
+try:
+    from core.tools.presence_absence import PresenceAbsenceTool
+except Exception:
+    PresenceAbsenceTool = None
+
+try:
+    from core.tools.yolo_roi import YoloROITool
+except Exception:
+    YoloROITool = None
 
 try:
     from config.plc_map import CO_READY, CO_BUSY, CO_RESULT_OK, CO_RESULT_NOK
@@ -64,6 +85,15 @@ class RunTab(QtWidgets.QWidget):
 
         self._build()
         self.tool_strip.currentRowChanged.connect(self._on_tool_selected_from_strip)
+
+        # nový panel – jednoducho: ak sa zmení parameter, aplikuj na aktívny nástroj
+        self.live_panel.paramsChanged.connect(lambda: self.live_panel.apply_to_tool(self._active_tool()))
+        self.live_panel.loadClicked.connect( lambda: self.live_panel.fill_from_tool(self._active_tool()))
+        self.live_panel.resetClicked.connect(lambda: self.live_panel.fill_from_tool(self._active_tool()))
+        self.live_panel.saveClicked.connect( self._save_live_to_recipe)
+
+
+
         # klávesy na prepínanie nástroja v hornom páse
         QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Left),  self,
                             activated=lambda: self._move_strip(-1))
@@ -84,11 +114,7 @@ class RunTab(QtWidgets.QWidget):
         self.btn_save_ok.clicked.connect(self._save_ok)
         self.btn_save_nok.clicked.connect(self._save_nok)
 
-        # živé ladenie
-        self.chk_live.stateChanged.connect(self._on_live_toggle)
-        self.btn_live_from_tool.clicked.connect(self._load_live_from_first_tool)
-        self.btn_live_reset.clicked.connect(self._reset_live)
-        self.btn_live_write.clicked.connect(self._write_live_to_recipe)
+
 
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self.loop_tick)
@@ -114,29 +140,14 @@ class RunTab(QtWidgets.QWidget):
         self.btn_save_ok = QtWidgets.QPushButton("Uložiť OK")
         self.btn_save_nok = QtWidgets.QPushButton("Uložiť NOK")
 
-        # ŽIVÉ LADENIE
-        live = QtWidgets.QGroupBox("Živé ladenie (dočasné)")
-        f = QtWidgets.QFormLayout(live)
-        self.chk_live = QtWidgets.QCheckBox("Aktívne")
-        self.spin_live_thresh = QtWidgets.QSpinBox(); self.spin_live_thresh.setRange(0,255); self.spin_live_thresh.setValue(35)
-        self.spin_live_morph = QtWidgets.QSpinBox(); self.spin_live_morph.setRange(0,10); self.spin_live_morph.setValue(1)
-        self.spin_live_blob  = QtWidgets.QSpinBox(); self.spin_live_blob.setRange(0,100000); self.spin_live_blob.setValue(120)
-        self.cmb_live_measure = QtWidgets.QComboBox(); self.cmb_live_measure.addItems(["Plocha vád (px²)", "Počet vád"])
-        hb = QtWidgets.QHBoxLayout()
-        self.btn_live_from_tool = QtWidgets.QPushButton("Načítať z nástroja")
-        self.btn_live_reset = QtWidgets.QPushButton("Reset")
-        self.btn_live_write = QtWidgets.QPushButton("Zapísať do receptu")
-        hb.addWidget(self.btn_live_from_tool); hb.addWidget(self.btn_live_reset); hb.addWidget(self.btn_live_write)
+         # --- ŽIVÉ LADENIE (nový widget) ---
+        self.live_panel = LiveTuningPanel()
 
-        f.addRow(self.chk_live)
-        f.addRow("Citlivosť – prahovanie", self.spin_live_thresh)
-        f.addRow("Čistenie šumu – iterácie", self.spin_live_morph)
-        f.addRow("Min. plocha vady [px²]", self.spin_live_blob)
-        f.addRow("Metóda merania", self.cmb_live_measure)
-        f.addRow(hb)
+        # Posledné merania (vytvoríme widget)
+        self.lbl_last = QtWidgets.QTextEdit()
+        self.lbl_last.setReadOnly(True)
 
-        self.lbl_last = QtWidgets.QTextEdit(); self.lbl_last.setReadOnly(True)
-
+        # Pravý panel – pridaj všetky prvky v poradí
         right.addWidget(self.lbl_verdict)
         right.addWidget(self.lbl_latency)
         right.addWidget(self.chk_plc)
@@ -145,7 +156,7 @@ class RunTab(QtWidgets.QWidget):
         right.addWidget(self.btn_trigger)
         right.addWidget(self.btn_save_ok)
         right.addWidget(self.btn_save_nok)
-        right.addWidget(live)
+        right.addWidget(self.live_panel)
         right.addWidget(QtWidgets.QLabel("Posledné merania:"))
         right.addWidget(self.lbl_last)
         right.addStretch()
@@ -154,6 +165,7 @@ class RunTab(QtWidgets.QWidget):
         top.addLayout(right, 1)
 
         self.film = FilmstripWidget()
+
         # --- TOOL STRIP (náhľady nástrojov) ---
         self.tool_strip = QtWidgets.QListWidget()
         self.tool_strip.setViewMode(QtWidgets.QListView.IconMode)
@@ -168,7 +180,8 @@ class RunTab(QtWidgets.QWidget):
 
         layout.addLayout(top, 5)
         layout.addWidget(self.film, 1)
-        self.tool_strip.currentRowChanged.connect(self._on_tool_selected_from_strip)
+
+
 
 
     # ---------- PLC ----------
@@ -181,64 +194,7 @@ class RunTab(QtWidgets.QWidget):
                 self.chk_plc.setChecked(False)
                 self.plc = None
 
-    # ---------- Live tuning ----------
-    def _on_live_toggle(self, _):
-        if self.chk_live.isChecked():
-            self._load_live_from_first_tool()
-
-    def _load_live_from_first_tool(self):
-        try:
-            tools = getattr(self.state.pipeline, "tools", [])
-            for t in tools:
-                if t.__class__.__name__ == "DiffFromRefTool":
-                    p = t.params or {}
-                    self.spin_live_thresh.setValue(int(p.get("thresh",35)))
-                    self.spin_live_morph.setValue(int(p.get("morph_open",1)))
-                    self.spin_live_blob.setValue(int(p.get("min_blob_area",120)))
-                    self.cmb_live_measure.setCurrentText("Plocha vád (px²)" if p.get("measure","area")=="area" else "Počet vád")
-                    break
-        except Exception:
-            pass
-
-    def _apply_live_to_tools(self):
-        if not self.chk_live.isChecked():
-            return
-        try:
-            tools = getattr(self.state.pipeline, "tools", [])
-            for t in tools:
-                if t.__class__.__name__ == "DiffFromRefTool":
-                    p = t.params or {}
-                    p["thresh"] = int(self.spin_live_thresh.value())
-                    p["morph_open"] = int(self.spin_live_morph.value())
-                    p["min_blob_area"] = int(self.spin_live_blob.value())
-                    p["measure"] = "area" if self.cmb_live_measure.currentText().startswith("Plocha") else "count"
-                    t.params = p
-        except Exception:
-            pass
-
-    def _reset_live(self):
-        self.chk_live.setChecked(False)
-
-    def _write_live_to_recipe(self):
-        """Zapíše aktuálne live parametre do receptu (všetkým diff_from_ref nástrojom) a uloží verziu."""
-        try:
-            recipe_name = self.state.current_recipe
-            if not recipe_name:
-                raise RuntimeError("Nie je aktívny recept.")
-            store = RecipeStoreJSON()
-            rec = store.load(recipe_name)
-            for t in rec.get("tools", []):
-                if t.get("type") == "diff_from_ref":
-                    p = t.setdefault("params",{})
-                    p["thresh"] = int(self.spin_live_thresh.value())
-                    p["morph_open"] = int(self.spin_live_morph.value())
-                    p["min_blob_area"] = int(self.spin_live_blob.value())
-                    p["measure"] = "area" if self.cmb_live_measure.currentText().startswith("Plocha") else "count"
-            store.save_version(recipe_name, rec)
-            QtWidgets.QMessageBox.information(self, "Zapísané", f"Parametre zapísané do receptu {recipe_name}.")
-        except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "Chyba zápisu", str(e))
-
+ 
     # ---------- Render ----------
     def _render_out(self, frame_gray, out):
         ok = out.get("ok", True)
@@ -335,23 +291,35 @@ class RunTab(QtWidgets.QWidget):
         if self.tool_strip.count() > 0:
             self.tool_strip.setCurrentRow(0)
             self._visible_tool_idx = 0
+            # hneď prepnúť „Živé ladenie“ na prvý nástroj
+            self._sync_live_panel_for_tool(0)
         else:
             self._visible_tool_idx = None
 
+
+
     def _on_tool_selected_from_strip(self, row: int):
-        """Klik na náhľad – zobraz overlay len pre daný tool."""
         if row is None or row < 0:
             self._visible_tool_idx = None
         else:
             self._visible_tool_idx = int(row)
 
-        # re-render posledný frame s posledným out (nečakáme na ďalší tick)
+        # vždy prepnúť živé ladenie na vybraný tool
+        self._sync_live_panel_for_tool(self._visible_tool_idx if self._visible_tool_idx is not None else -1)
+
+        # re-render posledného výstupu (bez čakania na ďalší tick)
         if self._last_frame is not None and self._last_out is not None:
             self._render_out(self._last_frame, self._last_out)
-        # Ak stále nie je nič vybraté, a strip má položky, vyber prvú
+
+        # fallback: ak nič nie je vybraté, vyber prvý
         if (self._visible_tool_idx is None) and (self.tool_strip.count() > 0):
             self.tool_strip.setCurrentRow(0)
             self._visible_tool_idx = 0
+            # vždy prepni live panel na vybraný tool
+            self._sync_live_panel_for_tool(self._visible_tool_idx if self._visible_tool_idx is not None else -1)
+
+
+
 
     def _move_strip(self, delta: int):
         if self.tool_strip.count() == 0:
@@ -423,6 +391,111 @@ class RunTab(QtWidgets.QWidget):
 
             it.setToolTip("\n".join(tip))
 
+    def _active_tool_idx(self) -> int:
+        row = self.tool_strip.currentRow()
+        return row if row >= 0 else None
+
+    def _active_tool(self):
+        idx = self._active_tool_idx()
+        tools = getattr(self.state.pipeline, "tools", []) or []
+        if idx is None or idx >= len(tools): return None
+        return tools[idx]
+
+    def _tool_type(self, tool) -> str:
+        """
+        Zistí typ toolu bez spoliehania sa na `tool.type`.
+        Vracia: "diff_from_ref" | "_wip_edge_line" | "_wip_edge_circle" | "_wip_edge_curve"
+                | "presence_absence" | "yolo_roi" | ""
+        """
+        if tool is None:
+            return ""
+
+        # 1) Priamy atribút (ak by existoval)
+        t = (getattr(tool, "type", None) or "")
+        if isinstance(t, str) and t:
+            return t.lower()
+
+        # 2) Podľa triedy (isinstance)
+        try:
+            if DiffFromRefTool and isinstance(tool, DiffFromRefTool):
+                return "diff_from_ref"
+        except Exception:
+            pass
+        try:
+            if EdgeTraceLineTool and isinstance(tool, EdgeTraceLineTool):
+                return "_wip_edge_line"
+            if EdgeTraceCircleTool and isinstance(tool, EdgeTraceCircleTool):
+                return "_wip_edge_circle"
+            if EdgeTraceCurveTool and isinstance(tool, EdgeTraceCurveTool):
+                return "_wip_edge_curve"
+        except Exception:
+            pass
+        try:
+            if PresenceAbsenceTool and isinstance(tool, PresenceAbsenceTool):
+                return "presence_absence"
+        except Exception:
+            pass
+        try:
+            if YoloROITool and isinstance(tool, YoloROITool):
+                return "yolo_roi"
+        except Exception:
+            pass
+
+        # 3) Fallback: podľa názvu modulu / triedy
+        cls = tool.__class__
+        mod = (getattr(cls, "__module__", "") or "").lower()
+        name = (getattr(cls, "__name__", "") or "").lower()
+        p = dict(getattr(tool, "params", {}) or {})
+
+        if "diff_from_ref" in mod or "difffromref" in name:
+            return "diff_from_ref"
+        if "edge_trace" in mod or "edgetrace" in name:
+            # rozhodni tvar podľa params.shape
+            shape = (p.get("shape") or "").lower()
+            if shape == "circle":
+                return "_wip_edge_circle"
+            if shape == "polyline":
+                return "_wip_edge_curve"
+            return "_wip_edge_line"
+        if "presence" in mod:
+            return "presence_absence"
+        if "yolo" in mod:
+            return "yolo_roi"
+
+        # 4) Fallback: podľa sady parametrov
+        keys = set(p.keys())
+        if {"canny_lo","canny_hi","width"} & keys:
+            return "_wip_edge_line"
+        if {"minScore"} & keys:
+            return "presence_absence"
+        if {"conf_thres","iou_thres","max_det"} & keys:
+            return "yolo_roi"
+
+        return ""
+
+    def _sync_live_panel_for_tool(self, row: int):
+        tool = self._active_tool()
+        typ = self._tool_type(tool)
+        self.live_panel.show_for_type(typ)
+        self.live_panel.fill_from_tool(tool)
+
+
+    def _save_live_to_recipe(self):
+        tool = self._active_tool()
+        if not tool:
+            QtWidgets.QMessageBox.information(self, "Zapísať do receptu", "Nie je vybraný žiadny nástroj.")
+            return
+        self.live_panel.apply_to_tool(tool)  # pre istotu
+
+        try:
+            if hasattr(self.state, "save_current_recipe"):
+                self.state.save_current_recipe()
+                QtWidgets.QMessageBox.information(self, "Zapísať do receptu", "Parametre nástroja boli uložené do receptu.")
+            else:
+                QtWidgets.QMessageBox.information(self, "Zapísať do receptu", "Parametre sú v pamäti nástroja. Ulož recept v História/Builder.")
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(self, "Zapísať do receptu", f"Uloženie zlyhalo: {e}")
+
 
     def _make_tool_icon(self, ref_gray: np.ndarray, tool, ok: bool = None, selected: bool = False) -> QtGui.QIcon:
         """Vygeneruje QIcon náhľadu: ref obrázok + ROI + (ak je) shape + zelený/červený pásik."""
@@ -490,7 +563,9 @@ class RunTab(QtWidgets.QWidget):
         frm = self.state.get_frame(timeout_ms=150)
         if frm is None: return
         self._last_frame = frm.copy()
-        self._apply_live_to_tools()
+        self.live_panel.apply_to_tool(self._active_tool())
+
+
         out = self.state.process(frm)
         self._render_out(frm, out)
         self._last_out = out
@@ -514,7 +589,9 @@ class RunTab(QtWidgets.QWidget):
             if not self.plc: return
             self._last_out_from_plc = None
             def do_cycle_capture():
-                self._apply_live_to_tools()
+                self.live_panel.apply_to_tool(self._active_tool())
+
+
                 out = self.state.process(frm)
                 self._last_out_from_plc = out
                 return out
@@ -528,7 +605,7 @@ class RunTab(QtWidgets.QWidget):
                 try: self.plc.mb.set_coil(20, 0)
                 except: pass
         else:
-            self._apply_live_to_tools()
+            self.live_panel.apply_to_tool(self._active_tool())
             out = self.state.process(frm)
             self._render_out(frm, out)
             self._last_out = out
