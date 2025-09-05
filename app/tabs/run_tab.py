@@ -64,6 +64,11 @@ class RunTab(QtWidgets.QWidget):
 
         self._build()
         self.tool_strip.currentRowChanged.connect(self._on_tool_selected_from_strip)
+        # klávesy na prepínanie nástroja v hornom páse
+        QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Left),  self,
+                            activated=lambda: self._move_strip(-1))
+        QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Right), self,
+                            activated=lambda: self._move_strip(+1))
 
         # až teraz – tool_strip už existuje a interné premenne sú definované
         self._populate_tool_strip()
@@ -348,6 +353,17 @@ class RunTab(QtWidgets.QWidget):
             self.tool_strip.setCurrentRow(0)
             self._visible_tool_idx = 0
 
+    def _move_strip(self, delta: int):
+        if self.tool_strip.count() == 0:
+            return
+        cur = self.tool_strip.currentRow()
+        if cur < 0:
+            cur = 0
+        new = max(0, min(self.tool_strip.count() - 1, cur + int(delta)))
+        if new != cur:
+            self.tool_strip.setCurrentRow(new)
+
+
     def _update_tool_strip_status(self, out: dict):
         """Podľa výsledkov nastav zelený/červený pásik v náhľadoch."""
         tools = getattr(self.state.pipeline, "tools", []) or []
@@ -370,6 +386,43 @@ class RunTab(QtWidgets.QWidget):
                 continue
             icon = self._make_tool_icon(ref, tools[i], ok=ok_flag, selected=(i == self._visible_tool_idx))
             it.setIcon(icon)
+
+            # --- tooltip s detailmi z posledného výsledku ---
+            label = getattr(tools[i], "name", f"Tool {i+1}")
+            tip = [label]
+
+            if i < len(res):
+                r = res[i]
+                measured = getattr(r, "measured", None)
+                units    = getattr(r, "units", "") or ""
+                lsl      = getattr(r, "lsl", None)
+                usl      = getattr(r, "usl", None)
+                details  = getattr(r, "details", {}) or {}
+
+                # ak edge-trace, pridaj metriku a štatistiky
+                metric = details.get("metric", None)
+                if measured is not None:
+                    units_str = f" {units}" if units else ""
+                    tip.append(f"hodnota = {float(measured):.2f}{units_str}")
+                tip.append(f"LSL = {lsl}   USL = {usl}")
+
+                if metric == "coverage_pct":
+                    cov = details.get("coverage_pct", 0.0)
+                    edges = details.get("edges_px", 0); band = details.get("band_px", 0)
+                    cl = details.get("canny_lo", None); ch = details.get("canny_hi", None)
+                    tip.append(f"metric = coverage_pct")
+                    tip.append(f"coverage = {cov:.1f}%  edges = {edges}/{band}")
+                    tip.append(f"canny = {cl}/{ch}")
+                elif metric == "px_gap":
+                    gap = details.get("gap_px", 0)
+                    edges = details.get("edges_px", 0); band = details.get("band_px", 0)
+                    cl = details.get("canny_lo", None); ch = details.get("canny_hi", None)
+                    tip.append(f"metric = px_gap")
+                    tip.append(f"gap_px = {gap}  edges = {edges}/{band}")
+                    tip.append(f"canny = {cl}/{ch}")
+
+            it.setToolTip("\n".join(tip))
+
 
     def _make_tool_icon(self, ref_gray: np.ndarray, tool, ok: bool = None, selected: bool = False) -> QtGui.QIcon:
         """Vygeneruje QIcon náhľadu: ref obrázok + ROI + (ak je) shape + zelený/červený pásik."""
