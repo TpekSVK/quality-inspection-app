@@ -1,5 +1,5 @@
 # app/tabs/builder_tab.py
-from PyQt5 import QtWidgets, QtCore
+from PyQt5 import QtWidgets, QtCore, QtGui
 from pathlib import Path
 import numpy as np
 import cv2 as cv
@@ -178,6 +178,8 @@ class BuilderTab(QtWidgets.QWidget):
         self.btn_mode_circle = QtWidgets.QRadioButton("Kružnica")
         self.btn_mode_poly = QtWidgets.QRadioButton("Krivka")
 
+        self._set_mode_icons()
+
 
         self.btn_mode_roi.setChecked(True)
 
@@ -192,8 +194,10 @@ class BuilderTab(QtWidgets.QWidget):
         self.spin_width = QtWidgets.QSpinBox()
         self.spin_width.setRange(1, 50)
         self.spin_width.setValue(3)
-        mode_bar.addWidget(QtWidgets.QLabel("Šírka profilu:"))
+        self.lbl_width = QtWidgets.QLabel("Šírka profilu:")
+        mode_bar.addWidget(self.lbl_width)
         mode_bar.addWidget(self.spin_width)
+
 
 
         self.btn_mode_roi.setToolTip("Kresli a upravuj meraciu oblasť (ROI).")
@@ -202,6 +206,13 @@ class BuilderTab(QtWidgets.QWidget):
         self.btn_mode_circle.setToolTip("Nakresli kružnicu: klik stred → ťahaj na polomer → pusti.")
         self.btn_mode_poly.setToolTip("Nakresli krivku: klikaj body, dvojklik ukončí, pravý klik vráti posledný bod.")
         self.spin_width.setToolTip("Šírka profilu okolo čiary/kruhu/krivky (px). Väčšia = tolerantnejšie vyhľadávanie hrán.")
+
+        # --- klávesové skratky pre režimy ---
+        QtWidgets.QShortcut(QtGui.QKeySequence("R"), self, activated=lambda: self._set_mode_safe("roi"))
+        QtWidgets.QShortcut(QtGui.QKeySequence("M"), self, activated=lambda: self._set_mode_safe("mask"))
+        QtWidgets.QShortcut(QtGui.QKeySequence("L"), self, activated=lambda: self._set_mode_safe("line"))
+        QtWidgets.QShortcut(QtGui.QKeySequence("C"), self, activated=lambda: self._set_mode_safe("circle"))
+        QtWidgets.QShortcut(QtGui.QKeySequence("K"), self, activated=lambda: self._set_mode_safe("polyline"))
 
 
         self.btn_use_roi = QtWidgets.QPushButton("Použiť aktuálne nakreslené ROI")
@@ -312,6 +323,55 @@ class BuilderTab(QtWidgets.QWidget):
                   self.dbl_lsl, self.dbl_usl, self.cmb_preset):
             w.installEventFilter(self)
 
+    def _set_mode_icons(self):
+        """Vygeneruje jednoduché vektorové ikonky (kreslené) pre režimy a nastaví ich na tlačidlá."""
+        def make_icon(painter_fn):
+            pm = QtGui.QPixmap(24, 24)
+            pm.fill(QtCore.Qt.transparent)
+            p = QtGui.QPainter(pm)
+            p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+            painter_fn(p)
+            p.end()
+            return QtGui.QIcon(pm)
+
+        pen_roi    = QtGui.QPen(QtGui.QColor(33,150,243), 2)   # modrá
+        pen_mask   = QtGui.QPen(QtGui.QColor(156,39,176), 2)   # fialová
+        pen_shape  = QtGui.QPen(QtGui.QColor(255,193,7), 2)    # žltá
+
+        def draw_rect(p):
+            p.setPen(pen_roi)
+            p.drawRect(4,4,16,16)
+
+        def draw_mask(p):
+            p.setPen(pen_mask)
+            p.drawRect(4,4,16,16)
+            p.fillRect(6,6,12,12, QtGui.QColor(156,39,176,60))
+
+        def draw_line(p):
+            p.setPen(pen_shape)
+            p.drawLine(5,18,19,6)
+
+        def draw_circle(p):
+            p.setPen(pen_shape)
+            p.drawEllipse(5,5,14,14)
+
+        def draw_poly(p):
+            p.setPen(pen_shape)
+            path = QtGui.QPainterPath()
+            path.moveTo(4,18); path.lineTo(10,8); path.lineTo(16,14); path.lineTo(20,6)
+            p.drawPath(path)
+
+        self.btn_mode_roi.setIcon(make_icon(draw_rect))
+        self.btn_mode_mask.setIcon(make_icon(draw_mask))
+        self.btn_mode_line.setIcon(make_icon(draw_line))
+        self.btn_mode_circle.setIcon(make_icon(draw_circle))
+        self.btn_mode_poly.setIcon(make_icon(draw_poly))
+
+        # trochu miesta pre text + ikonku
+        for b in (self.btn_mode_roi, self.btn_mode_mask, self.btn_mode_line, self.btn_mode_circle, self.btn_mode_poly):
+            b.setIconSize(QtCore.QSize(20,20))
+
+
     # ---- Event filter pre nápovedu ----
     def eventFilter(self, obj, ev):
         if ev.type() == QtCore.QEvent.FocusIn:
@@ -393,8 +453,10 @@ class BuilderTab(QtWidgets.QWidget):
             "_wip_edge_curve":"Vada na krivke",
         }.get(typ, typ)
 
+
         self.lbl_type.setText(sk_typ)
         self.edit_name.setText(t.get("name","Kontrola A"))
+        self._update_ui_for_tool(typ)
 
         x,y,w,h = t.get("roi_xywh",[0,0,200,200])
         self.roi_view.set_roi(x,y,w,h)
@@ -453,6 +515,44 @@ class BuilderTab(QtWidgets.QWidget):
         # Maskovacie ovládanie je osobitne (pre diff + presence_absence + yolo_roi)
         self._update_mask_buttons()
 
+    def _supports_shape(self, typ: str) -> bool:
+        return typ in {"_wip_edge_line", "_wip_edge_circle", "_wip_edge_curve"}
+
+    def _supports_masks(self, typ: str) -> bool:
+        # masky teraz neaplikujeme pre edge-trace; zapnuté pre ostatné existujúce nástroje
+        return typ in {"diff_from_ref", "presence_absence", "yolo_roi"}
+
+    def _update_ui_for_tool(self, typ: str):
+        """Podľa typu nástroja zobraz/skrývaj módy a tlačidlá."""
+        shape = self._supports_shape(typ)
+        masks = self._supports_masks(typ)
+
+        # shape ovládanie
+        self.btn_mode_line.setVisible(shape)
+        self.btn_mode_circle.setVisible(shape)
+        self.btn_mode_poly.setVisible(shape)
+        self.spin_width.setVisible(shape)
+        self.lbl_width.setVisible(shape)
+
+        # mask ovládanie
+        self.btn_mode_mask.setVisible(masks)
+        self.btn_add_mask.setVisible(masks)
+        self.btn_del_mask.setVisible(masks)
+        self.btn_clear_masks.setVisible(masks)
+
+        # ROI vždy viditeľné
+        self.btn_mode_roi.setVisible(True)
+        self.btn_use_roi.setVisible(True)
+
+        # ak je práve zvolený skrytý mód, prepneme na ROI
+        hidden_checked = any(b.isChecked() and not b.isVisible() for b in (
+            self.btn_mode_mask, self.btn_mode_line, self.btn_mode_circle, self.btn_mode_poly
+        ))
+        if hidden_checked:
+            self.btn_mode_roi.setChecked(True)
+
+
+
     def _on_mode_roi(self, checked: bool):
         self.roi_view.set_mode("roi" if checked else "mask")
         self.help_box.setPlainText(HELP_TEXTS["roi" if checked else "masks"])
@@ -509,6 +609,20 @@ class BuilderTab(QtWidgets.QWidget):
             p["shape"] = "polyline"
             p["pts"] = s.get("pts", [])
             p["width"] = s.get("width", self.spin_width.value())
+
+    def _set_mode_safe(self, mode: str):
+        mapping = {
+            "roi": self.btn_mode_roi,
+            "mask": self.btn_mode_mask,
+            "line": self.btn_mode_line,
+            "circle": self.btn_mode_circle,
+            "polyline": self.btn_mode_poly,
+        }
+        btn = mapping.get(mode)
+        if not btn or not btn.isVisible() or not btn.isEnabled():
+            return
+        btn.setChecked(True)
+
 
     def _tool_needs_shape(self, typ: str) -> bool:
         return typ in {"_wip_edge_line", "_wip_edge_circle", "_wip_edge_curve"}
