@@ -1,5 +1,6 @@
 # app/widgets/tools_catalog.py
-from PyQt5 import QtWidgets, QtCore
+from PyQt5 import QtWidgets, QtCore, QtGui
+
 
 class ToolCatalogDialog(QtWidgets.QDialog):
     """
@@ -36,10 +37,27 @@ class ToolCatalogDialog(QtWidgets.QDialog):
         right = QtWidgets.QWidget()
         rv = QtWidgets.QVBoxLayout(right)
 
-        rv.addWidget(QtWidgets.QLabel("Nástroje"))
+        top_bar = QtWidgets.QHBoxLayout()
+        top_bar.addWidget(QtWidgets.QLabel("Nástroje"))
+        top_bar.addStretch(1)
+        self.edit_search = QtWidgets.QLineEdit()
+        self.edit_search.setPlaceholderText("Hľadať nástroj…")
+        self.edit_search.setClearButtonEnabled(True)
+        top_bar.addWidget(self.edit_search, 0)
+        rv.addLayout(top_bar)
+
         self.list_tools = QtWidgets.QListWidget()
         self.list_tools.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        # režim GRID (kartičky)
+        self.list_tools.setViewMode(QtWidgets.QListView.IconMode)
+        self.list_tools.setResizeMode(QtWidgets.QListView.Adjust)
+        self.list_tools.setWrapping(True)
+        self.list_tools.setSpacing(12)
+        self.list_tools.setWordWrap(True)
+        self.list_tools.setIconSize(QtCore.QSize(56, 56))
+        self.list_tools.setUniformItemSizes(False)
         rv.addWidget(self.list_tools, 1)
+
 
         self.desc = QtWidgets.QTextEdit()
         self.desc.setReadOnly(True)
@@ -69,8 +87,11 @@ class ToolCatalogDialog(QtWidgets.QDialog):
         # signály
         self.list_cat.currentItemChanged.connect(self._on_cat_changed)
         self.list_tools.currentItemChanged.connect(self._on_tool_changed)
+        self.list_tools.itemDoubleClicked.connect(lambda *_: self._on_add())
+        self.edit_search.textChanged.connect(self._on_search)
         self.btn_add.clicked.connect(self._on_add)
         self.btn_close.clicked.connect(self.reject)
+
 
         self._on_cat_changed(self.list_cat.currentItem(), None)
 
@@ -81,37 +102,79 @@ class ToolCatalogDialog(QtWidgets.QDialog):
 
     # --- handlers ---
     def _on_cat_changed(self, cur, prev):
+        self._selected_tpl = None
+        self.btn_add.setEnabled(False)
         self.list_tools.clear()
         self.desc.clear()
-        self._selected_tpl = None
         if not cur:
             return
         cat = cur.data(QtCore.Qt.UserRole)
-        for t in cat["tools"]:
-            label = t["title"]
-            if not t.get("enabled", True):
-                label += "  (čoskoro)"
-            it = QtWidgets.QListWidgetItem(label)
-            it.setData(QtCore.Qt.UserRole, t)
-            if not t.get("enabled", True):
-                it.setFlags(it.flags() & ~QtCore.Qt.ItemIsEnabled)
-            self.list_tools.addItem(it)
-        self.btn_add.setEnabled(False)
+        self._render_tools_list(cat, self.edit_search.text().strip())
+        # kým nie je vybraný tool, ukáž popis kategórie
+        cat_desc = cat.get("desc", "")
+        if cat_desc:
+            self.desc.setPlainText(cat_desc)
+
 
     def _on_tool_changed(self, cur, prev):
-        self.desc.clear()
         self._selected_tpl = None
         self.btn_add.setEnabled(False)
+        self.desc.clear()
         if not cur:
             return
         t = cur.data(QtCore.Qt.UserRole)
         self._selected_tpl = t
-        self.desc.setPlainText(t.get("desc",""))
+        txt = t.get("desc","")
+        # doplň názov kvôli čitateľnosti
+        self.desc.setPlainText(f"{t.get('title','')}\n\n{txt}" if txt else t.get("title",""))
         self.btn_add.setEnabled(t.get("enabled", True))
+
 
     def _on_add(self):
         # potvrď výber a zavri dialóg
         self.accept()
+
+    def _render_tools_list(self, cat: dict, query: str):
+        """Vyrenderuje kartičky nástrojov danej kategórie podľa filtra."""
+        self.list_tools.clear()
+        q = (query or "").lower()
+        color = QtGui.QColor(255, 193, 7)  # žltý badge default
+        for t in cat.get("tools", []):
+            title = t.get("title","")
+            desc  = t.get("desc","")
+            if q and (q not in title.lower() and q not in desc.lower()):
+                continue
+
+            # ikonka (jednoduchý farebný štvorček)
+            pm = QtGui.QPixmap(56,56)
+            pm.fill(color)
+            icon = QtGui.QIcon(pm)
+
+            label = title + ("" if t.get("enabled", True) else "  (čoskoro)")
+            it = QtWidgets.QListWidgetItem(icon, label)
+            it.setData(QtCore.Qt.UserRole, t)
+            it.setToolTip(desc or title)
+            # disabled vizuál
+            if not t.get("enabled", True):
+                it.setFlags(it.flags() & ~QtCore.Qt.ItemIsEnabled)
+            # veľkosť kartičky (text pod ikonou)
+            it.setSizeHint(QtCore.QSize(160, 110))
+            self.list_tools.addItem(it)
+
+    def _on_search(self, text: str):
+        cur = self.list_cat.currentItem()
+        if not cur:
+            return
+        cat = cur.data(QtCore.Qt.UserRole)
+        self._render_tools_list(cat, text)
+        self._selected_tpl = None
+        self.btn_add.setEnabled(False)
+        # keď filter zmením, nechám v popise popis kategórie (kým užívateľ znova neklikne na položku)
+        self.desc.clear()
+        cat_desc = cat.get("desc", "")
+        if cat_desc:
+            self.desc.setPlainText(cat_desc)
+
 
     # --- dáta katalógu (bezpečne mapované na existujúce tool typy) ---
     def _build_catalog_data(self):

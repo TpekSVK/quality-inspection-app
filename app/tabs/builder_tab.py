@@ -178,10 +178,15 @@ class BuilderTab(QtWidgets.QWidget):
         self.btn_mode_circle = QtWidgets.QRadioButton("Kružnica")
         self.btn_mode_poly = QtWidgets.QRadioButton("Krivka")
 
+
         self.btn_mode_roi.setChecked(True)
+
+
         for b in (self.btn_mode_roi, self.btn_mode_mask, self.btn_mode_line, self.btn_mode_circle, self.btn_mode_poly):
             mode_bar.addWidget(b)
         mode_bar.addStretch(1)
+
+
 
         # šírka profilu (pre line/circle/polyline)
         self.spin_width = QtWidgets.QSpinBox()
@@ -189,6 +194,14 @@ class BuilderTab(QtWidgets.QWidget):
         self.spin_width.setValue(3)
         mode_bar.addWidget(QtWidgets.QLabel("Šírka profilu:"))
         mode_bar.addWidget(self.spin_width)
+
+
+        self.btn_mode_roi.setToolTip("Kresli a upravuj meraciu oblasť (ROI).")
+        self.btn_mode_mask.setToolTip("Kresli ignorované oblasti – čo sa nemá počítať.")
+        self.btn_mode_line.setToolTip("Nakresli úsečku: klik začiatok → ťahaj → pusti.")
+        self.btn_mode_circle.setToolTip("Nakresli kružnicu: klik stred → ťahaj na polomer → pusti.")
+        self.btn_mode_poly.setToolTip("Nakresli krivku: klikaj body, dvojklik ukončí, pravý klik vráti posledný bod.")
+        self.spin_width.setToolTip("Šírka profilu okolo čiary/kruhu/krivky (px). Väčšia = tolerantnejšie vyhľadávanie hrán.")
 
 
         self.btn_use_roi = QtWidgets.QPushButton("Použiť aktuálne nakreslené ROI")
