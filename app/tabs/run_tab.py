@@ -14,13 +14,15 @@ try:
 except Exception:
     CO_READY=CO_BUSY=CO_RESULT_OK=CO_RESULT_NOK=0
 
-def compose_overlay(frame_gray: np.ndarray, ref_shape: tuple, out: dict) -> np.ndarray:
+def compose_overlay(frame_gray: np.ndarray, ref_shape: tuple, out: dict, only_idx: int = None) -> np.ndarray:
     h_ref, w_ref = ref_shape
     base = frame_gray
     if base.shape[:2] != (h_ref, w_ref):
         base = cv.resize(base, (w_ref, h_ref), interpolation=cv.INTER_LINEAR)
     canvas = cv.cvtColor(base, cv.COLOR_GRAY2BGR)
-    for r in out.get("results", []):
+    for i, r in enumerate(out.get("results", [])):
+        if only_idx is not None and i != only_idx:
+            continue
         ov = getattr(r, "overlay", None)
         details = getattr(r, "details", {}) if hasattr(r, "details") else {}
         # masky – fialové
@@ -33,27 +35,40 @@ def compose_overlay(frame_gray: np.ndarray, ref_shape: tuple, out: dict) -> np.n
             if x2 > x1 and y2 > y1:
                 cv.rectangle(canvas, (x1,y1), (x2,y2), (255, 0, 255), 2)
         roi = details.get("roi_xywh", None)
-        if ov is None or roi is None: 
+        if ov is None or roi is None:
             continue
         x, y, ww, hh = [int(v) for v in roi]
         x = max(0, min(w_ref-1, x)); y = max(0, min(h_ref-1, y))
         W = min(ww, w_ref - x); Hh = min(hh, h_ref - y)
-        if W <= 0 or Hh <= 0: 
+        if W <= 0 or Hh <= 0:
             continue
         try:
             if ov.shape[1] != W or ov.shape[0] != Hh:
                 ov = cv.resize(ov, (W, Hh), interpolation=cv.INTER_NEAREST)
             canvas[y:y+Hh, x:x+W] = cv.addWeighted(canvas[y:y+Hh, x:x+W], 0.6, ov, 0.4, 0)
-            cv.rectangle(canvas, (x,y), (x+W, y+Hh), (255, 153, 0), 2)  # modrá-ish
+            cv.rectangle(canvas, (x,y), (x+W, y+Hh), (255, 153, 0), 2)
         except Exception:
             pass
     return canvas
+
 
 class RunTab(QtWidgets.QWidget):
     def __init__(self, state, parent=None):
         super().__init__(parent)
         self.state = state
+        # defaulty ešte PRED prvým populate (aby existovali)
+        self._last_frame = None
+        self._last_out = None
+        self._last_out_from_plc = None
+        self._visible_tool_idx = None
+
         self._build()
+        self.tool_strip.currentRowChanged.connect(self._on_tool_selected_from_strip)
+
+        # až teraz – tool_strip už existuje a interné premenne sú definované
+        self._populate_tool_strip()
+
+
 
         self._last_frame = None
         self._last_out_from_plc = None
@@ -134,8 +149,22 @@ class RunTab(QtWidgets.QWidget):
         top.addLayout(right, 1)
 
         self.film = FilmstripWidget()
+        # --- TOOL STRIP (náhľady nástrojov) ---
+        self.tool_strip = QtWidgets.QListWidget()
+        self.tool_strip.setViewMode(QtWidgets.QListView.IconMode)
+        self.tool_strip.setFlow(QtWidgets.QListView.LeftToRight)
+        self.tool_strip.setWrapping(False)
+        self.tool_strip.setResizeMode(QtWidgets.QListView.Adjust)
+        self.tool_strip.setIconSize(QtCore.QSize(128, 80))
+        self.tool_strip.setSpacing(8)
+        self.tool_strip.setFixedHeight(112)
+        self.tool_strip.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        layout.addWidget(self.tool_strip, 0)
+
         layout.addLayout(top, 5)
         layout.addWidget(self.film, 1)
+        self.tool_strip.currentRowChanged.connect(self._on_tool_selected_from_strip)
+
 
     # ---------- PLC ----------
     def _ensure_plc(self):
@@ -214,12 +243,17 @@ class RunTab(QtWidgets.QWidget):
             ("#2e7d32" if ok else "#c62828")
         )
         self.lbl_latency.setText(f"lat: {out.get('elapsed_ms',0.0):.1f} ms")
+        # Ak pipeline už beží a strip je prázdny alebo nepasuje počet položiek, dopopuluj ho
+        tools = getattr(self.state.pipeline, "tools", []) or []
+        if (self.tool_strip.count() == 0 and len(tools) > 0) or (self.tool_strip.count() != len(tools)):
+            self._populate_tool_strip()
 
         if self.state.ref_img is not None:
             ref_h, ref_w = self.state.ref_img.shape[:2]
         else:
             ref_h, ref_w = frame_gray.shape[:2]
-        comp = compose_overlay(frame_gray, (ref_h, ref_w), out)
+        comp = compose_overlay(frame_gray, (ref_h, ref_w), out, self._visible_tool_idx)
+
         self.view.set_ndarray(comp)
 
         lines = []
@@ -274,6 +308,127 @@ class RunTab(QtWidgets.QWidget):
         h, w = rgb.shape[:2]
         qimg = QtGui.QImage(rgb.data, w, h, 3*w, QtGui.QImage.Format_RGB888)
         self.film.add_pixmap(QtGui.QPixmap.fromImage(qimg))
+    
+    def _populate_tool_strip(self):
+        """Vyplní horný pás náhľadmi nástrojov (podľa pipeline)."""
+        self.tool_strip.clear()
+        tools = getattr(self.state.pipeline, "tools", []) or []
+        ref = getattr(self.state, "ref_img", None)
+        if ref is None:
+            lf = getattr(self, "_last_frame", None)
+            ref = lf if lf is not None else np.zeros((240, 320), np.uint8)
+
+
+
+        for i, t in enumerate(tools):
+            icon = self._make_tool_icon(ref, t, ok=None, selected=(i == 0))
+            it = QtWidgets.QListWidgetItem(icon, getattr(t, "name", f"Tool {i+1}"))
+            it.setData(QtCore.Qt.UserRole, i)
+            self.tool_strip.addItem(it)
+
+        # default vyber prvý tool, ak existuje
+        if self.tool_strip.count() > 0:
+            self.tool_strip.setCurrentRow(0)
+            self._visible_tool_idx = 0
+        else:
+            self._visible_tool_idx = None
+
+    def _on_tool_selected_from_strip(self, row: int):
+        """Klik na náhľad – zobraz overlay len pre daný tool."""
+        if row is None or row < 0:
+            self._visible_tool_idx = None
+        else:
+            self._visible_tool_idx = int(row)
+
+        # re-render posledný frame s posledným out (nečakáme na ďalší tick)
+        if self._last_frame is not None and self._last_out is not None:
+            self._render_out(self._last_frame, self._last_out)
+        # Ak stále nie je nič vybraté, a strip má položky, vyber prvú
+        if (self._visible_tool_idx is None) and (self.tool_strip.count() > 0):
+            self.tool_strip.setCurrentRow(0)
+            self._visible_tool_idx = 0
+
+    def _update_tool_strip_status(self, out: dict):
+        """Podľa výsledkov nastav zelený/červený pásik v náhľadoch."""
+        tools = getattr(self.state.pipeline, "tools", []) or []
+        # ak počet položiek v stripe nepasuje, najprv ho postav znova
+        if self.tool_strip.count() != len(tools):
+            self._populate_tool_strip()
+
+        ref = getattr(self.state, "ref_img", None)
+        if ref is None:
+            ref = self._last_frame if self._last_frame is not None else np.zeros((240, 320), np.uint8)
+
+        res = out.get("results", [])
+        n = min(len(tools), len(res))
+        for i in range(len(tools)):
+            ok_flag = None
+            if i < n:
+                ok_flag = bool(getattr(res[i], "ok", True))
+            it = self.tool_strip.item(i)
+            if it is None:
+                continue
+            icon = self._make_tool_icon(ref, tools[i], ok=ok_flag, selected=(i == self._visible_tool_idx))
+            it.setIcon(icon)
+
+    def _make_tool_icon(self, ref_gray: np.ndarray, tool, ok: bool = None, selected: bool = False) -> QtGui.QIcon:
+        """Vygeneruje QIcon náhľadu: ref obrázok + ROI + (ak je) shape + zelený/červený pásik."""
+        try:
+            h, w = ref_gray.shape[:2]
+        except Exception:
+            ref_gray = np.zeros((240,320), np.uint8)
+            h, w = ref_gray.shape[:2]
+
+        TW, TH = 128, 80
+        small = cv.resize(ref_gray, (TW, TH), interpolation=cv.INTER_AREA)
+        bgr = cv.cvtColor(small, cv.COLOR_GRAY2BGR)
+
+        # škálovanie globálnych súradníc do thumbu
+        sx = TW / float(w if w else 1)
+        sy = TH / float(h if h else 1)
+
+        # ROI (oranžový rámik)
+        try:
+            x, y, ww, hh = [int(v) for v in getattr(tool, "roi_xywh", (0,0,0,0))]
+            x1, y1 = int(x*sx), int(y*sy)
+            x2, y2 = int((x+ww)*sx), int((y+hh)*sy)
+            cv.rectangle(bgr, (x1,y1), (x2,y2), (0, 200, 255), 2)
+        except Exception:
+            pass
+
+        # Edge-shape (žltá)
+        try:
+            p = getattr(tool, "params", {}) or {}
+            shape = p.get("shape", None)
+            if shape == "line":
+                pts = p.get("pts", [])
+                if len(pts) == 2:
+                    (x1,y1),(x2,y2) = pts
+                    cv.line(bgr, (int(x1*sx),int(y1*sy)), (int(x2*sx),int(y2*sy)), (0, 220, 255), 2, cv.LINE_AA)
+            elif shape == "circle":
+                cx, cy, r = p.get("cx"), p.get("cy"), int(p.get("r", 0))
+                if cx is not None and cy is not None and r > 0:
+                    cv.circle(bgr, (int(cx*sx), int(cy*sy)), max(1,int(r*sx)), (0, 220, 255), 2, cv.LINE_AA)
+            elif shape == "polyline":
+                pts = p.get("pts", [])
+                if len(pts) >= 2:
+                    arr = np.array([[int(px*sx), int(py*sy)] for (px,py) in pts], dtype=np.int32)
+                    cv.polylines(bgr, [arr], False, (0, 220, 255), 2, lineType=cv.LINE_AA)
+        except Exception:
+            pass
+
+        # OK/NOK pásik dole
+        if ok is not None:
+            color = (0, 170, 0) if ok else (0, 0, 200)
+            cv.rectangle(bgr, (0, TH-6), (TW, TH), color, thickness=-1)
+
+        # Výber – žltý okraj
+        if selected:
+            cv.rectangle(bgr, (1,1), (TW-2, TH-2), (255, 210, 0), 2)
+
+        rgb = cv.cvtColor(bgr, cv.COLOR_BGR2RGB)
+        qimg = QtGui.QImage(rgb.data, TW, TH, 3*TW, QtGui.QImage.Format_RGB888)
+        return QtGui.QIcon(QtGui.QPixmap.fromImage(qimg))
 
     # ---------- Cyklus ----------
     def _cycle_now(self):
@@ -285,6 +440,9 @@ class RunTab(QtWidgets.QWidget):
         self._apply_live_to_tools()
         out = self.state.process(frm)
         self._render_out(frm, out)
+        self._last_out = out
+        self._update_tool_strip_status(out)
+
 
     def _trigger_now(self):
         self._ensure_plc()
@@ -310,12 +468,19 @@ class RunTab(QtWidgets.QWidget):
             self.plc.tick(do_cycle_capture)
             if self._last_out_from_plc is not None:
                 self._render_out(frm, self._last_out_from_plc)
+                self._last_out = self._last_out_from_plc
+                self._update_tool_strip_status(self._last_out_from_plc)
+
+
                 try: self.plc.mb.set_coil(20, 0)
                 except: pass
         else:
             self._apply_live_to_tools()
             out = self.state.process(frm)
             self._render_out(frm, out)
+            self._last_out = out
+            self._update_tool_strip_status(out)
+
 
     # --- ukladanie datasetu ---
     def _save_ok(self):

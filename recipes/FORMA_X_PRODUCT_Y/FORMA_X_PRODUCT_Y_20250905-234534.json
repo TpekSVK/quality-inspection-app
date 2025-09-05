@@ -1,0 +1,112 @@
+{
+  "meta": {
+    "name": "FORMA_X_PRODUCT_Y"
+  },
+  "reference_image": "recipes\\FORMA_X_PRODUCT_Y\\reference.png",
+  "fixture": {
+    "type": "template",
+    "tpl_xywh": [
+      100,
+      100,
+      200,
+      200
+    ],
+    "min_score": 0.6
+  },
+  "pxmm": null,
+  "tools": [
+    {
+      "type": "_wip_edge_line",
+      "name": "Vada na priamke",
+      "roi_xywh": [
+        164,
+        64,
+        328,
+        245
+      ],
+      "params": {
+        "canny_hi": 120,
+        "canny_lo": 40,
+        "metric": "coverage_pct",
+        "pts": [
+          [
+            293,
+            258
+          ],
+          [
+            308,
+            69
+          ]
+        ],
+        "shape": "line",
+        "width": 3,
+        "mask_rects": []
+      },
+      "lsl": null,
+      "usl": 200.0,
+      "units": "px"
+    },
+    {
+      "type": "diff_from_ref",
+      "name": "Celková plocha všetkých vád",
+      "roi_xywh": [
+        215,
+        82,
+        223,
+        207
+      ],
+      "params": {
+        "blur": 3,
+        "mask_rects": [
+          [
+            50,
+            47,
+            171,
+            260
+          ],
+          [
+            425,
+            45,
+            142,
+            279
+          ]
+        ],
+        "measure": "area",
+        "min_blob_area": 120,
+        "morph_open": 1,
+        "thresh": 35
+      },
+      "lsl": null,
+      "usl": 200.0,
+      "units": "px²"
+    },
+    {
+      "type": "presence_absence",
+      "name": "Prítomnosť/Absencia tvaru",
+      "roi_xywh": [
+        570,
+        3,
+        67,
+        113
+      ],
+      "params": {
+        "mask_rects": [
+          [
+            2,
+            0,
+            230,
+            35
+          ]
+        ],
+        "minScore": 0.7
+      },
+      "lsl": null,
+      "usl": 200.0,
+      "units": "bool"
+    }
+  ],
+  "models": {},
+  "plc": {
+    "recipe_code": 101
+  }
+}
