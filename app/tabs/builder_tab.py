@@ -233,6 +233,7 @@ class BuilderTab(QtWidgets.QWidget):
 
         # PRAVO
         right = QtWidgets.QFormLayout()
+        self._form_right = right  # aby sme mali referenciu, keby sme chceli neskôr pracovať s labelmi
         self.lbl_type = QtWidgets.QLabel("-")
         self.edit_name = QtWidgets.QLineEdit("Kontrola A")
 
@@ -253,6 +254,53 @@ class BuilderTab(QtWidgets.QWidget):
 
         self.spin_fpr = QtWidgets.QDoubleSpinBox(); self.spin_fpr.setRange(0.0001,0.1); self.spin_fpr.setDecimals(4); self.spin_fpr.setValue(0.003)
         self.btn_autoteach = QtWidgets.QPushButton("Auto-teach horná hranica (USL) z OK snímok")
+
+        # --- Skupiny parametrov podľa nástroja (default skryté / ukazujeme podľa výberu) ---
+
+        # 0) Diff (porovnanie s referenciou) – wrapper, aby sa dal skryť naraz
+        self.grp_diff = QtWidgets.QWidget()
+        g_diff = QtWidgets.QFormLayout(self.grp_diff)
+        g_diff.setContentsMargins(0,0,0,0)
+        g_diff.addRow("Citlivosť (prahovanie):", self.spin_thresh)
+        g_diff.addRow("Čistenie šumu (morf. open):", self.spin_morph)
+        g_diff.addRow("Min. plocha defektu (px²):", self.spin_blob)
+        g_diff.addRow("Metóda merania:", self.cmb_measure)
+
+        # 1) Edge-trace (čiara/kružnica/krivka)
+        self.grp_edge = QtWidgets.QWidget()
+        g_edge = QtWidgets.QFormLayout(self.grp_edge)
+        self.spin_canny_lo = QtWidgets.QSpinBox(); self.spin_canny_lo.setRange(0,255); self.spin_canny_lo.setValue(40)
+        self.spin_canny_hi = QtWidgets.QSpinBox(); self.spin_canny_hi.setRange(0,255); self.spin_canny_hi.setValue(120)
+        self.cmb_metric = QtWidgets.QComboBox(); self.cmb_metric.addItems(["px_gap (menej=lepšie)", "coverage_pct (viac=lepšie)"])
+        self.grp_edge.setToolTip("Parametre vyhodnocovania hrán v páse okolo nakreslenej čiary/kruhu/krivky.")
+        g_edge.addRow("Canny low:", self.spin_canny_lo)
+        g_edge.addRow("Canny high:", self.spin_canny_hi)
+        g_edge.addRow("Metrika:", self.cmb_metric)
+
+        # 2) Presence/Absence
+        self.grp_presence = QtWidgets.QWidget()
+        g_pa = QtWidgets.QFormLayout(self.grp_presence)
+        self.dbl_minScore = QtWidgets.QDoubleSpinBox(); self.dbl_minScore.setRange(0.0, 1.0); self.dbl_minScore.setDecimals(3); self.dbl_minScore.setSingleStep(0.01); self.dbl_minScore.setValue(0.70)
+        self.grp_presence.setToolTip("Minimálne skóre zhody šablóny v ROI.")
+        g_pa.addRow("Min. skóre:", self.dbl_minScore)
+
+        # 3) YOLO v ROI
+        self.grp_yolo = QtWidgets.QWidget()
+        g_y = QtWidgets.QFormLayout(self.grp_yolo)
+        self.dbl_conf = QtWidgets.QDoubleSpinBox(); self.dbl_conf.setRange(0.0, 1.0); self.dbl_conf.setSingleStep(0.01); self.dbl_conf.setValue(0.25)
+        self.dbl_iou  = QtWidgets.QDoubleSpinBox(); self.dbl_iou.setRange(0.0, 1.0);  self.dbl_iou.setSingleStep(0.01);  self.dbl_iou.setValue(0.45)
+        self.spin_max_det = QtWidgets.QSpinBox(); self.spin_max_det.setRange(1, 2000); self.spin_max_det.setValue(100)
+        self.grp_yolo.setToolTip("Parametre NMS a dôveryhodnosti modelu YOLO.")
+        g_y.addRow("Conf threshold:", self.dbl_conf)
+        g_y.addRow("IoU threshold:", self.dbl_iou)
+        g_y.addRow("Max detections:", self.spin_max_det)
+
+        # default: skryť všetky skupiny – do FormLayoutu ich pridávame nižšie v sekcii „Jednotné poradie“
+        for grp in (self.grp_diff, self.grp_edge, self.grp_presence, self.grp_yolo):
+            grp.hide()
+
+
+
         # NOVÉ tlačidlo: OK + NOK
         self.btn_autoteach_both = QtWidgets.QPushButton("Auto-teach z OK+NOK (optimálny prah)")
 
@@ -264,27 +312,55 @@ class BuilderTab(QtWidgets.QWidget):
         self.help_box.setMinimumHeight(120)
         self.help_box.setStyleSheet("QTextEdit{background:#111; color:#ddd; border-radius:8px; padding:8px;}")
 
+        # ---- JEDNOTNÉ PORADIE V PRAVOM PANELI ----
         right.addRow("<b>Typ nástroja</b>", self.lbl_type)
-        right.addRow("Názov (krátko)", self.edit_name)
-        right.addRow(QtWidgets.QLabel("<hr>"))
+
+        # 1) Predvoľba (hneď po type)
         right.addRow("Predvoľba", self.cmb_preset)
         right.addRow("", self.btn_preset)
+
         right.addRow(QtWidgets.QLabel("<hr>"))
-        right.addRow("Citlivosť – prahovanie", self.spin_thresh)
-        right.addRow("Čistenie šumu – iterácie", self.spin_morph)
-        right.addRow("Min. plocha vady [px²]", self.spin_blob)
-        right.addRow("Metóda merania", self.cmb_measure)
+
+        # 2) Názov (praktické dať sem, po predvoľbe)
+        right.addRow("Názov (krátko)", self.edit_name)
+
         right.addRow(QtWidgets.QLabel("<hr>"))
+
+        # 3) Parametre nástroja (kontextové skupiny)
+        right.addRow(QtWidgets.QLabel("<b>Parametre nástroja</b>"))
+        # (Tieto skupiny si vytvoril vyššie v _build(): self.grp_diff / self.grp_edge / self.grp_presence / self.grp_yolo)
+        right.addRow(self.grp_diff)
+        right.addRow(self.grp_edge)
+        right.addRow(self.grp_presence)
+        right.addRow(self.grp_yolo)
+
+        right.addRow(QtWidgets.QLabel("<hr>"))
+
+        # 4) Limity a jednotky
         right.addRow("Spodná hranica (LSL)", self.dbl_lsl)
         right.addRow("Horná hranica (USL)", self.dbl_usl)
         right.addRow("Jednotky", self.edit_units)
+
         right.addRow(QtWidgets.QLabel("<hr>"))
+
+        # 5) Akcia – uložiť zmeny do nástroja
+        right.addRow("", self.btn_apply)
+
+        right.addRow(QtWidgets.QLabel("<hr>"))
+
+        # 6) Cieľová FPR (predposledné) + Auto-teach tlačidlá
         right.addRow("Cieľová FPR", self.spin_fpr)
         right.addRow("", self.btn_autoteach)
-        right.addRow("", self.btn_autoteach_both)  # NOVÝ RIADOK
+        right.addRow("", self.btn_autoteach_both)
+
         right.addRow(QtWidgets.QLabel("<hr>"))
-        right.addRow("", self.btn_apply)
+
+        # 7) Nápoveda (posledné)
         right.addRow("Nápoveda", self.help_box)
+
+        # (Nezabudni: kontextové skupiny skry/ukáž v _update_ui_for_tool(typ)
+        #  self.grp_diff.setVisible(is_diff), self.grp_edge.setVisible(shape), atď.)
+
 
         layout.addLayout(left, 1)
         layout.addLayout(mid, 1)
@@ -505,6 +581,24 @@ class BuilderTab(QtWidgets.QWidget):
         self.spin_blob.setValue(int(params.get("min_blob_area",120)))
         self.cmb_measure.setCurrentText("Plocha vád (px²)" if params.get("measure","area")=="area" else "Počet vád")
 
+        # --- Edge-trace params ---
+        self.spin_canny_lo.setValue(int(params.get("canny_lo", 40)))
+        self.spin_canny_hi.setValue(int(params.get("canny_hi", 120)))
+        metric = str(params.get("metric", "px_gap")).lower()
+        self.cmb_metric.setCurrentText("coverage_pct (viac=lepšie)" if metric=="coverage_pct" else "px_gap (menej=lepšie)")
+
+        # --- Presence/Absence ---
+        self.dbl_minScore.setValue(float(params.get("minScore", 0.70)))
+
+        # --- YOLO v ROI ---
+        self.dbl_conf.setValue(float(params.get("conf_thres", 0.25)))
+        self.dbl_iou.setValue(float(params.get("iou_thres", 0.45)))
+        self.spin_max_det.setValue(int(params.get("max_det", 100)))
+
+        # --- Zapni/Skry UI skupiny podľa typu ---
+        self._update_ui_for_tool(typ)
+
+
         is_diff = (typ == "diff_from_ref")
         # Parametrove polia a autoteach len pre diff
         for w in (self.spin_thresh, self.spin_morph, self.spin_blob, self.cmb_measure,
@@ -516,33 +610,54 @@ class BuilderTab(QtWidgets.QWidget):
         self._update_mask_buttons()
 
     def _supports_shape(self, typ: str) -> bool:
-        return typ in {"_wip_edge_line", "_wip_edge_circle", "_wip_edge_curve"}
+        return (typ or "").lower() in {"_wip_edge_line", "_wip_edge_circle", "_wip_edge_curve"}
 
     def _supports_masks(self, typ: str) -> bool:
-        # masky teraz neaplikujeme pre edge-trace; zapnuté pre ostatné existujúce nástroje
-        return typ in {"diff_from_ref", "presence_absence", "yolo_roi"}
+        return (typ or "").lower() in {"diff_from_ref", "presence_absence", "yolo_roi"}
+
+    def _supports_diff(self, typ: str) -> bool:
+        return (typ or "").lower() == "diff_from_ref"
+
+    def _supports_presence(self, typ: str) -> bool:
+        return (typ or "").lower() == "presence_absence"
+
+    def _supports_yolo(self, typ: str) -> bool:
+        return (typ or "").lower() == "yolo_roi"
 
     def _update_ui_for_tool(self, typ: str):
-        """Podľa typu nástroja zobraz/skrývaj módy a tlačidlá."""
+        """Podľa typu nástroja zobraz/skrývaj režimy a parametrové skupiny."""
         shape = self._supports_shape(typ)
         masks = self._supports_masks(typ)
+        is_diff = self._supports_diff(typ)
+        is_pa   = self._supports_presence(typ)
+        is_yolo = self._supports_yolo(typ)
 
-        # shape ovládanie
+        # shape ovládanie (štetce + šírka profilu)
         self.btn_mode_line.setVisible(shape)
         self.btn_mode_circle.setVisible(shape)
         self.btn_mode_poly.setVisible(shape)
         self.spin_width.setVisible(shape)
         self.lbl_width.setVisible(shape)
 
-        # mask ovládanie
+        # mask ovládanie a tlačidlá
         self.btn_mode_mask.setVisible(masks)
         self.btn_add_mask.setVisible(masks)
         self.btn_del_mask.setVisible(masks)
         self.btn_clear_masks.setVisible(masks)
 
-        # ROI vždy viditeľné
+        # diff parametre – skry/ukáž celú skupinu aj s popiskami
+        self.grp_diff.setVisible(is_diff)
+
+
+        # nové skupiny parametrov
+        self.grp_edge.setVisible(shape)
+        self.grp_presence.setVisible(is_pa)
+        self.grp_yolo.setVisible(is_yolo)
+
+        # ROI a „Použiť zmeny“ nech sú stále viditeľné
         self.btn_mode_roi.setVisible(True)
         self.btn_use_roi.setVisible(True)
+        self.btn_apply.setVisible(True)
 
         # ak je práve zvolený skrytý mód, prepneme na ROI
         hidden_checked = any(b.isChecked() and not b.isVisible() for b in (
@@ -752,8 +867,27 @@ class BuilderTab(QtWidgets.QWidget):
             p["min_blob_area"] = int(self.spin_blob.value())
             p["measure"] = "area" if self.cmb_measure.currentText().startswith("Plocha") else "count"
 
+        # Edge-trace parametre
+        elif t.get("type") in {"_wip_edge_line", "_wip_edge_circle", "_wip_edge_curve"}:
+            p["canny_lo"] = int(self.spin_canny_lo.value())
+            p["canny_hi"] = int(self.spin_canny_hi.value())
+            p["metric"] = "coverage_pct" if self.cmb_metric.currentText().startswith("coverage") else "px_gap"
+
+        # Presence/Absence parametre
+        elif t.get("type") == "presence_absence":
+            p["minScore"] = float(self.dbl_minScore.value())
+
+        # YOLO v ROI parametre
+        elif t.get("type") == "yolo_roi":
+            p["conf_thres"] = float(self.dbl_conf.value())
+            p["iou_thres"]  = float(self.dbl_iou.value())
+            p["max_det"]    = int(self.spin_max_det.value())
+                    
         self._refresh_tool_list()
+        
         QtWidgets.QMessageBox.information(self, "OK", "Zmeny aplikované. Nezabudni „Uložiť verziu“.")
+
+ 
 
     def open_tool_catalog(self):
         """

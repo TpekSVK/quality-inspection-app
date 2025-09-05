@@ -224,13 +224,51 @@ class RunTab(QtWidgets.QWidget):
 
         lines = []
         for r in out.get("results", []):
-            name = getattr(r, "name", "nástroj")
+            name     = getattr(r, "name", "nástroj")
             measured = getattr(r, "measured", 0.0)
-            lsl = getattr(r, "lsl", None)
-            usl = getattr(r, "usl", None)
-            ok_t = getattr(r, "ok", True)
-            lines.append(f"{name} | hodnota={float(measured):.2f}  LSL={lsl}  USL={usl}  -> {'OK' if ok_t else 'NOK'}")
+            lsl      = getattr(r, "lsl", None)
+            usl      = getattr(r, "usl", None)
+            ok_t     = getattr(r, "ok", True)
+
+            # načítaj detaily skôr, aby sme vedeli prípadne prepnúť jednotky
+            details  = getattr(r, "details", {}) or {}
+            units    = getattr(r, "units", "")
+
+            # override jednotiek pre edge-trace, ak metrika je coverage_pct
+            if details.get("metric") == "coverage_pct":
+                units = "%"
+
+            units_str = f" {units}" if units else ""
+            lines.append(f"{name} | hodnota={float(measured):.2f}{units_str}  LSL={lsl}  USL={usl}  -> {'OK' if ok_t else 'NOK'}")
+
+            # Edge-trace: metrika a štatistiky
+            metric = details.get("metric")
+            if metric == "coverage_pct":
+                cov = details.get("coverage_pct", 0.0)
+                edges = details.get("edges_px", 0)
+                band = details.get("band_px", 0)
+                canny_lo = details.get("canny_lo", None)
+                canny_hi = details.get("canny_hi", None)
+                lines.append(f"   ↳ metric={metric} | coverage={cov:.1f}%  edges={edges}/{band}  canny={canny_lo}/{canny_hi}")
+            elif metric == "px_gap":
+                gap = details.get("gap_px", 0)
+                edges = details.get("edges_px", 0)
+                band = details.get("band_px", 0)
+                canny_lo = details.get("canny_lo", None)
+                canny_hi = details.get("canny_hi", None)
+                lines.append(f"   ↳ metric={metric} | gap_px={gap}  edges={edges}/{band}  canny={canny_lo}/{canny_hi}")
+
+            # diff_from_ref: ak tool poslal tieto polia, ukáž tuning parametre
+            if {"measure","thresh","morph_open","min_blob_area"} <= set(details.keys()):
+                measure_name = "Plocha vád (px²)" if details.get("measure") == "area" else "Počet vád"
+                lines.append(
+                    f"   ↳ measure={measure_name}  thresh={details.get('thresh')}  "
+                    f"morph={details.get('morph_open')}  min_blob={details.get('min_blob_area')}"
+                )
+
         self.lbl_last.setPlainText("\n".join(lines))
+
+
 
         rgb = cv.cvtColor(comp, cv.COLOR_BGR2RGB)
         h, w = rgb.shape[:2]

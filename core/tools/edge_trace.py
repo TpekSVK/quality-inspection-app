@@ -1,18 +1,15 @@
 # core/tools/edge_trace.py
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, Tuple
 import numpy as np
 import cv2 as cv
-
 from .base_tool import BaseTool, ToolResult
 
 # --- helpers ---
 
 def _warp_to_ref(img: np.ndarray, ref_shape: Tuple[int,int], H: Optional[np.ndarray]) -> np.ndarray:
-    """Zarovná aktuálny obraz na rozmer referencie (h,w)."""
     h_ref, w_ref = ref_shape
     if H is not None:
         return cv.warpPerspective(img, H, (w_ref, h_ref))
-    # bez fixtúry – ak rozmer nesedí, doriešime resize (rovnako to robí RUN overlay)
     if img.shape[:2] != (h_ref, w_ref):
         return cv.resize(img, (w_ref, h_ref), interpolation=cv.INTER_LINEAR)
     return img
@@ -27,7 +24,6 @@ def _safe_crop(img: np.ndarray, roi: Tuple[int,int,int,int]) -> np.ndarray:
     return img[y1:y2, x1:x2]
 
 def _shape_to_roi_local(params: Dict[str, Any], roi_xywh: Tuple[int,int,int,int]) -> Dict[str, Any]:
-    """Prekonvertuje globálne súradnice kresby do lokálnych (v rámci ROI)."""
     x0, y0, _, _ = [int(v) for v in roi_xywh]
     p = dict(params or {})
     s = p.get("shape", None)
@@ -46,11 +42,9 @@ def _shape_to_roi_local(params: Dict[str, Any], roi_xywh: Tuple[int,int,int,int]
     return p
 
 def _draw_shape_mask(h: int, w: int, params_local: Dict[str, Any]) -> np.ndarray:
-    """Binárna maska 'pásu' okolo lokálneho tvaru v ROI (255=kontroluj)."""
     m = np.zeros((h, w), np.uint8)
     s = params_local.get("shape")
     width = max(1, min(255, int(params_local.get("width", 3))))
-
     if s == "line":
         pts = params_local.get("pts", [])
         if len(pts) == 2:
@@ -67,63 +61,70 @@ def _draw_shape_mask(h: int, w: int, params_local: Dict[str, Any]) -> np.ndarray
             cv.polylines(m, [arr], False, 255, thickness=width, lineType=cv.LINE_AA)
     return m
 
-def _edge_density_gaps(img_gray: np.ndarray, band_mask: np.ndarray,
-                       canny_lo: int, canny_hi: int) -> Dict[str, Any]:
-    """Canny hrany → koľko px v páse NEMÁ hranu (gap)."""
+def _edge_stats(img_gray: np.ndarray, band_mask: np.ndarray,
+                canny_lo: int, canny_hi: int) -> Dict[str, Any]:
     edges = cv.Canny(img_gray, canny_lo, canny_hi)
     band = (band_mask > 0)
     band_px = int(band.sum())
     edges_px = int((edges > 0)[band].sum())
     gap_px = max(0, band_px - edges_px)
+    coverage_pct = (100.0 * edges_px / band_px) if band_px > 0 else 0.0
 
-    # overlay (BGR): červený pás, zelené pixely tam, kde sú hrany v páse
+    # overlay: červený pás, zelené pixely = hrany v páse
     overlay = cv.cvtColor(img_gray, cv.COLOR_GRAY2BGR)
-    overlay[band] = (0, 0, 255)      # pás
+    overlay[band] = (0, 0, 255)
     green = (edges > 0) & band
-    overlay[green] = (0, 255, 0)     # hrany v páse
+    overlay[green] = (0, 255, 0)
 
-    return {"gap_px": gap_px, "band_px": band_px, "edges_px": edges_px, "overlay": overlay}
+    return {
+        "band_px": band_px,
+        "edges_px": edges_px,
+        "gap_px": gap_px,
+        "coverage_pct": float(coverage_pct),
+        "overlay": overlay,
+    }
 
-# --- tooly ---
+# --- tools ---
 
 class _EdgeTraceBase(BaseTool):
-    """
-    ELI5: Najprv aktuálny záber zarovnáme na referenciu (fixtúra),
-    potom v ROI pozrieme „pás“ okolo tvojej čiary/kruhu/krivky.
-    Measured = počet px v páse bez hrán (gap_px) → čím menej, tým lepšie.
-    """
     def run(self, img_ref: np.ndarray, img_cur: np.ndarray, fixture_transform: Optional[np.ndarray]) -> ToolResult:
-        # 0) bezpečnosť
         if img_ref is None or img_cur is None or img_cur.size == 0:
             return ToolResult(False, 0.0, self.lsl, self.usl, {"error":"empty image", "roi_xywh": self.roi_xywh})
 
-        # 1) ZAROVNAJ na referenciu (ako ostatné tooly), aby súradnice sedeli
-        ref_shape = img_ref.shape[:2]   # (h,w)
-        cur_ref = _warp_to_ref(img_cur, ref_shape, fixture_transform)  # zarovnaný na rozmer ref
-        if cur_ref.ndim == 3: cur_gray = cv.cvtColor(cur_ref, cv.COLOR_BGR2GRAY)
-        else: cur_gray = cur_ref
+        # 1) Zarovnanie na referenciu
+        cur_ref = _warp_to_ref(img_cur, img_ref.shape[:2], fixture_transform)
+        if cur_ref.ndim == 3:
+            cur_gray = cv.cvtColor(cur_ref, cv.COLOR_BGR2GRAY)
+        else:
+            cur_gray = cur_ref
 
-        # 2) Vystrihni ROI v referenčných súradniciach
+        # 2) ROI crop
         x, y, w, h = [int(v) for v in self.roi_xywh]
         roi = (x, y, w, h)
         roi_gray = _safe_crop(cur_gray, roi)
         if roi_gray.size == 0:
             return ToolResult(False, 0.0, self.lsl, self.usl, {"error":"roi out of bounds", "roi_xywh": roi})
 
-        # 3) Prekonvertuj kresbu do LOKÁLNYCH súradníc ROI (odpočítame x,y)
+        # 3) Shape → ROI-lokálne súradnice
         p_global = dict(self.params or {})
         p_local = _shape_to_roi_local(p_global, roi)
-
-        # 4) Vytvor pás okolo kresby a spočítaj „gapy“ hrán
         band = _draw_shape_mask(roi_gray.shape[0], roi_gray.shape[1], p_local)
         if band.sum() == 0:
             return ToolResult(False, 0.0, self.lsl, self.usl, {"error":"shape mask empty (nakresli tvar)", "roi_xywh": roi})
+
+        # 4) Metrika
         canny_lo = int(p_global.get("canny_lo", 40))
         canny_hi = int(p_global.get("canny_hi", 120))
-        met = _edge_density_gaps(roi_gray, band, canny_lo, canny_hi)
-        measured = float(met["gap_px"])
+        stats = _edge_stats(roi_gray, band, canny_lo, canny_hi)
 
-        # 5) Limitovanie + detaily pre RUN overlay
+        metric = str(p_global.get("metric", "px_gap")).lower()
+        if metric == "coverage_pct":
+            measured = float(stats["coverage_pct"])
+        else:
+            metric = "px_gap"
+            measured = float(stats["gap_px"])
+
+        # 5) Limity a výsledok
         lsl = self.lsl if self.lsl is not None else float("-inf")
         usl = self.usl if self.usl is not None else float("+inf")
         ok = (lsl <= measured <= usl)
@@ -133,9 +134,13 @@ class _EdgeTraceBase(BaseTool):
             "shape": p_global.get("shape"),
             "width": int(p_global.get("width", 3)),
             "canny_lo": canny_lo, "canny_hi": canny_hi,
-            "gap_px": int(met["gap_px"]), "band_px": int(met["band_px"]), "edges_px": int(met["edges_px"]),
+            "band_px": int(stats["band_px"]),
+            "edges_px": int(stats["edges_px"]),
+            "gap_px": int(stats["gap_px"]),
+            "coverage_pct": float(stats["coverage_pct"]),
+            "metric": metric,
         }
-        return ToolResult(ok=ok, measured=measured, lsl=self.lsl, usl=self.usl, details=details, overlay=met["overlay"])
+        return ToolResult(ok=ok, measured=measured, lsl=self.lsl, usl=self.usl, details=details, overlay=stats["overlay"])
 
 class EdgeTraceLineTool(_EdgeTraceBase):   # type = "_wip_edge_line"
     pass

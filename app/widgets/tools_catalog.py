@@ -327,7 +327,7 @@ class ToolCatalogDialog(QtWidgets.QDialog):
                 "id":"defect_on_line",
                 "title":"Vada na priamke",
                 "type":"_wip_edge_line",
-                "params":{"shape":"line","pts":[[10,10],[100,10]],"width":3},
+                "params":{"canny_lo":40, "canny_hi":120, "metric":"px_gap", "shape":"line","pts":[[10,10],[100,10]],"width":3},
                 "units":"px",
                 "desc":"Kontrola súvislosti pozdĺž čiary (napr. či hrana nie je prerušená). Potrebuje kreslenie čiary v ROI.",
                 "enabled": True
@@ -336,7 +336,7 @@ class ToolCatalogDialog(QtWidgets.QDialog):
                 "id":"defect_on_circle",
                 "title":"Vada na kružnici",
                 "type":"_wip_edge_circle",
-                "params":{"shape":"circle","cx":80,"cy":80,"r":60,"width":3},
+                "params":{"canny_lo":40, "canny_hi":120, "metric":"px_gap", "shape":"circle","cx":80,"cy":80,"r":60,"width":3},
                 "units":"px",
                 "desc":"Kontrola defektov po obvode. Potrebuje kreslenie kružnice v ROI.",
                 "enabled": True
@@ -345,7 +345,7 @@ class ToolCatalogDialog(QtWidgets.QDialog):
                 "id":"defect_on_curve",
                 "title":"Vada na krivke",
                 "type":"_wip_edge_curve",
-                "params":{"shape":"polyline","pts":[[10,10],[40,30],[90,60]],"width":3},
+                "params":{"canny_lo":40, "canny_hi":120, "metric":"px_gap", "shape":"polyline","pts":[[10,10],[40,30],[90,60]],"width":3},
                 "units":"px",
                 "desc":"Kontrola pozdĺž ľubovoľnej krivky (polyline). Potrebuje kreslenie lomenej čiary v ROI.",
                 "enabled": True
