@@ -43,13 +43,20 @@ class RunTab(QtWidgets.QWidget):
     def __init__(self, state, parent=None):
         super().__init__(parent)
         self.state = state
-        # defaulty ešte PRED prvým populate (aby existovali)
+
+        # init interných premenných
         self._last_frame = None
         self._last_out = None
         self._last_out_from_plc = None
         self._visible_tool_idx = None
+        self._do_cycle_capture = False  # <<< NOVÉ
+        self._freeze_plc_manual = False  # po manuálnom cykle v PLC móde zamraz zobrazenie
+
 
         self._build()
+
+        # signály až po vytvorení widgetov
+        self.cmb_view.currentIndexChanged.connect(self._rerender_last)  # <<< PRESUNUTÉ SEM
         self.tool_strip.currentRowChanged.connect(self._on_tool_selected_from_strip)
         self.tool_strip.enable_keyboard(self)
 
@@ -65,11 +72,10 @@ class RunTab(QtWidgets.QWidget):
         self.btn_save_ok.clicked.connect(self._save_ok)
         self.btn_save_nok.clicked.connect(self._save_nok)
 
-
-
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self.loop_tick)
         self.timer.start(50)
+
 
     def _build(self):
         layout = QtWidgets.QVBoxLayout(self)
@@ -90,6 +96,14 @@ class RunTab(QtWidgets.QWidget):
         self.btn_trigger = QtWidgets.QPushButton("PLC Test Trigger (coil 20)")
         self.btn_save_ok = QtWidgets.QPushButton("Uložiť OK")
         self.btn_save_nok = QtWidgets.QPushButton("Uložiť NOK")
+
+        # --- Náhľad zobrazenia ---
+        row_view = QtWidgets.QHBoxLayout()
+        row_view.addWidget(QtWidgets.QLabel("Náhľad:"))
+        self.cmb_view = QtWidgets.QComboBox()
+        self.cmb_view.addItems(["Štandard", "ROI po preproc", "ROI bez preproc", "Čistý obraz"])
+        row_view.addWidget(self.cmb_view, 1)
+        right.addLayout(row_view)
 
         # --- ŽIVÉ LADENIE (nový widget) ---
         self.live_panel = LiveTuningPanel()
@@ -163,7 +177,8 @@ class RunTab(QtWidgets.QWidget):
             ref_h, ref_w = self.state.ref_img.shape[:2]
         else:
             ref_h, ref_w = frame_gray.shape[:2]
-        comp = compose_overlay(frame_gray, (ref_h, ref_w), out, self._visible_tool_idx)
+        comp = compose_overlay(frame_gray, (ref_h, ref_w), out, self._visible_tool_idx, view_mode=self._view_mode())
+
 
         self.view.set_ndarray(comp)
 
@@ -254,13 +269,20 @@ class RunTab(QtWidgets.QWidget):
             # vždy prepni live panel na vybraný tool
             self._sync_live_panel_for_tool(self._visible_tool_idx if self._visible_tool_idx is not None else -1)
 
+    def _view_mode(self) -> str:
+        t = self.cmb_view.currentText().lower()
+        if "čistý" in t: return "clean"
+        if "bez preproc" in t: return "roi_raw"
+        if "po preproc" in t: return "roi_preproc"
+        return "standard"
 
-
-
-    
-
-
-    
+    def _rerender_last(self):
+        # len prekresli podľa posledných dát – žiadny nový process!
+        if self._last_frame is not None and self._last_out is not None:
+            self._render_out(self._last_frame, self._last_out)
+        elif self._last_frame is not None and self._last_out_from_plc is not None:
+            self._render_out(self._last_frame, self._last_out_from_plc)
+        
     def _active_tool_idx(self) -> int:
         row = self.tool_strip.currentRow()
         return row if row >= 0 else None
@@ -382,6 +404,9 @@ class RunTab(QtWidgets.QWidget):
         out = self.state.process(frm)
         self._render_out(frm, out)
         self._last_out = out
+        if self.chk_plc.isChecked():
+            self._last_out_from_plc = out
+            self._freeze_plc_manual = True   # <<< ZAMRAZ PO MANUÁLNOM CYKLE V PLC
         # nič ďalšie – _render_out už volá tool_strip.update_status(...)
 
 
@@ -394,38 +419,60 @@ class RunTab(QtWidgets.QWidget):
     def loop_tick(self):
         if self.state.pipeline is None or self.state.camera is None:
             return
-        frm = self.state.get_frame(timeout_ms=50)
-        if frm is None: return
-        self._last_frame = frm.copy()
 
+        # --- PLC režim ---
         if self.chk_plc.isChecked():
+            # Ak máme "zmrazený" manuálny cyklus, iba PREKRESĽUJEME posledný výsledok.
+            if self._freeze_plc_manual and (self._last_frame is not None) and (self._last_out_from_plc is not None):
+                # žiadne nové snímanie, žiadny nový process – len render
+                self._render_out(self._last_frame, self._last_out_from_plc)
+                self._last_out = self._last_out_from_plc
+                return
+
+            # Inak bežný PLC tick (len keď PLC povie „rob cyklus“),
+            # ale aj tak si zoberieme JEDEN aktuálny frame:
+            frm = self.state.get_frame(timeout_ms=50)
+            if frm is None:
+                return
+            self._last_frame = frm.copy()
+
             self._ensure_plc()
-            if not self.plc: return
+            if not self.plc:
+                return
+
             self._last_out_from_plc = None
+
             def do_cycle_capture():
+                # spracuj JEDEN cyklus len keď PLC to vyžiada
                 self.live_panel.apply_to_tool(self._active_tool())
-
-
                 out = self.state.process(frm)
                 self._last_out_from_plc = out
                 return out
+
+            # PLC handshake – ak trigger/busy atď., zavolá do_cycle_capture raz
             self.plc.tick(do_cycle_capture)
+
             if self._last_out_from_plc is not None:
+                # Máme nové dáta z PLC cyklu → zruš freeze (ak by bol z predošlého cyklu)
+                self._freeze_plc_manual = False
                 self._render_out(frm, self._last_out_from_plc)
                 self._last_out = self._last_out_from_plc
-                # _render_out už robí tool_strip.update_status(...)
+                try:
+                    self.plc.mb.set_coil(20, 0)
+                except:
+                    pass
+            return  # dôležité: nepadni do non-PLC vetvy
 
-
-
-                try: self.plc.mb.set_coil(20, 0)
-                except: pass
-        else:
-            self.live_panel.apply_to_tool(self._active_tool())
-            out = self.state.process(frm)
-            self._render_out(frm, out)
-            self._last_out = out
-            # _render_out už robí tool_strip.update_status(...)
-
+        # --- non-PLC režim (bežný streaming) ---
+        frm = self.state.get_frame(timeout_ms=50)
+        if frm is None:
+            return
+        self._last_frame = frm.copy()
+        self.live_panel.apply_to_tool(self._active_tool())
+        out = self.state.process(frm)
+        self._render_out(frm, out)
+        self._last_out = out
+        # _render_out už robí tool_strip.update_status(...)
 
 
     # --- ukladanie datasetu ---

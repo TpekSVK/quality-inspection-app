@@ -17,7 +17,7 @@
   "tools": [
     {
       "type": "_wip_edge_line",
-      "name": "Vada na priamke",
+      "name": "1",
       "roi_xywh": [
         265,
         226,
@@ -43,13 +43,8 @@
         "mask_rects": [],
         "preproc": [
           {
-            "k": 3,
+            "k": 7,
             "op": "median"
-          },
-          {
-            "clip": 2.0,
-            "op": "clahe",
-            "tile": 8
           }
         ]
       },
@@ -59,7 +54,7 @@
     },
     {
       "type": "_wip_edge_line",
-      "name": "Vada na priamke",
+      "name": "3",
       "roi_xywh": [
         284,
         192,

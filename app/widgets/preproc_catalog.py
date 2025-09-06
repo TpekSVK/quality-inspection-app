@@ -33,7 +33,10 @@ class _OpEditor(QtWidgets.QGroupBox):
 
     def __init__(self, step: Dict[str,Any], parent=None):
         super().__init__(f"Op: {step.get('op','?')}", parent)
-        self.step = dict(step)
+
+        # držíme REFERENCIU na pôvodný krok v chain-e, nie kópiu
+        self.step = step
+
         form = QtWidgets.QFormLayout(self)
         self.widgets = {}
 
@@ -72,9 +75,10 @@ class _OpEditor(QtWidgets.QGroupBox):
 
     def _on_changed(self, *_):
         # uloží hodnoty späť
-        for k,w in self.widgets.items():
+        for k, w in self.widgets.items():
             self.step[k] = float(w.value()) if isinstance(w, QtWidgets.QDoubleSpinBox) else int(w.value())
-        self.changed.emit()
+        self.changed.emit()  # povieme dialógu „zmenilo sa“
+
 
 class PreprocDialog(QtWidgets.QDialog):
     """
@@ -87,7 +91,7 @@ class PreprocDialog(QtWidgets.QDialog):
 
         self._catalog = list(DEFAULT_PREPROC)
         self._selected = None
-        self._chain = list(initial_chain or [])
+        self._chain = [dict(s) for s in (initial_chain or [])]
 
         main = QtWidgets.QVBoxLayout(self)
         split = QtWidgets.QSplitter(self); split.setOrientation(QtCore.Qt.Horizontal)
@@ -165,6 +169,8 @@ class PreprocDialog(QtWidgets.QDialog):
         self.lbl_title.setText(f"<b>{data.get('title','?')}</b>")
         self.txt_desc.setPlainText(data.get("desc",""))
         self._rebuild_op_editors(self._chain)
+        self._update_summary()
+
 
     def _rebuild_op_editors(self, chain: List[Dict[str,Any]]):
         # zmaž staré editory
@@ -175,19 +181,18 @@ class PreprocDialog(QtWidgets.QDialog):
         # pridaj nové
         for step in chain:
             ed = _OpEditor(step)
-            ed.changed.connect(lambda s=ed: self._update_step_from_editor(s))
+            # keď sa zmení parameter v editore, reťazec je už prepísaný (referencia),
+            # stačí obnoviť textový sumár
+            ed.changed.connect(self._update_summary)
             self.ops_layout.addWidget(ed)
         self.ops_layout.addStretch(1)
 
-    def _update_step_from_editor(self, editor: _OpEditor):
-        # prepíš editor.step späť do _chain
-        for i, st in enumerate(self._chain):
-            if st is editor.step:  # identity by reference nie je zaručená -> fallback:
-                self._chain[i] = dict(editor.step)
-                return
-        # fallback: skús podľa 'op' a poradia
-        # (MVP – jednoduché)
-        pass
+
+    def _update_summary(self):
+        self.txt_desc.setPlainText(_chain_to_text(self._chain))
+
 
     def selected_chain(self) -> List[Dict[str,Any]]:
-        return list(self._chain or [])
+        # Builder si uloží čistú kópiu
+        return [dict(s) for s in (self._chain or [])]
+
