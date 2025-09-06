@@ -48,10 +48,15 @@ class PresenceAbsenceTool(BaseTool):
             full_mask = None
 
         # predspracovanie (rovnako na tpl aj cur), rešpektuj masku
+        pre_desc = "—"
+        pre_preview = None
         chain = (self.params or {}).get("preproc", []) or []
         if chain:
             roi_cur = self._apply_preproc_chain(roi_cur, chain, mask=full_mask)
             tpl     = self._apply_preproc_chain(tpl,     chain, mask=full_mask)
+            pre_desc = self._preproc_desc(chain)
+            pre_preview = cv.cvtColor(roi_cur, cv.COLOR_GRAY2BGR)
+
 
         # template match
         method = self.params.get("method", cv.TM_CCOEFF_NORMED)
@@ -70,4 +75,7 @@ class PresenceAbsenceTool(BaseTool):
         cv.rectangle(overlay, top_left, (top_left[0]+w_t, top_left[1]+h_t), (0,255,0) if ok else (0,0,255), 2)
 
         details = {"roi_xywh": (x,y,w,h), "score": measured, "minScore": minScore}
+        details["preproc_desc"] = pre_desc
+        details["preproc_preview"] = pre_preview
+
         return ToolResult(ok=ok, measured=measured, lsl=lsl, usl=usl, details=details, overlay=overlay)

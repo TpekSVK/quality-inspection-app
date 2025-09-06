@@ -55,6 +55,8 @@ def _load_mask(mask_path: Optional[str]) -> Optional[np.ndarray]:
 
 class DiffFromRefTool(BaseTool):
     def run(self, img_ref: np.ndarray, img_cur: np.ndarray, fixture_transform: Optional[np.ndarray]) -> ToolResult:
+       
+       
         # 1) do rozmeru referencie
         ref_gray = cv.cvtColor(img_ref, cv.COLOR_BGR2GRAY) if img_ref.ndim == 3 else img_ref
         cur_to_ref = _warp_to_ref(img_cur, ref_gray.shape[:2], fixture_transform)
@@ -83,8 +85,14 @@ class DiffFromRefTool(BaseTool):
         roi_ref, roi_cur = _align_same_size(roi_ref, roi_cur)
         roi_mask, _      = _align_same_size(roi_mask, roi_cur)
 
+        pre_desc = "—"
+        pre_preview = None
+
         if roi_ref.size == 0 or roi_cur.size == 0 or roi_mask.size == 0:
             details = {"roi_xywh": (x,y,w,h), "error": "ROI out of bounds after clipping"}
+            details["preproc_desc"] = pre_desc
+            details["preproc_preview"] = pre_preview
+
             return ToolResult(ok=False, measured=0.0, lsl=self.lsl, usl=self.usl, details=details, overlay=None)
 
         # 4) Predspracovanie (rovnaké na REF aj CUR), rešpektuje masku (0=ignoruj)
@@ -92,6 +100,8 @@ class DiffFromRefTool(BaseTool):
         if chain:
             roi_ref = self._apply_preproc_chain(roi_ref, chain, mask=roi_mask)
             roi_cur = self._apply_preproc_chain(roi_cur, chain, mask=roi_mask)
+            pre_desc = self._preproc_desc(chain)
+            pre_preview = cv.cvtColor(roi_cur, cv.COLOR_GRAY2BGR)
 
         # 5) aplikuj masku (nulujeme ignorované oblasti pre diff)
         roi_ref = cv.bitwise_and(roi_ref, roi_mask)
@@ -142,5 +152,9 @@ class DiffFromRefTool(BaseTool):
             "min_blob_area": min_blob_area,
             "mask_rects": mask_rects,
             "used_mask_path": (mask_path if mask_path else None)
+
         }
+        details["preproc_desc"] = pre_desc
+        details["preproc_preview"] = pre_preview
+
         return ToolResult(ok=ok, measured=measured, lsl=self.lsl, usl=self.usl, details=details, overlay=overlay)

@@ -120,8 +120,9 @@ class YOLOInROITool(BaseTool):
 
     def run(self, img_ref: np.ndarray, img_cur: np.ndarray, fixture_transform: Optional[np.ndarray]) -> ToolResult:
         onnx_path = self.params["onnx_path"]
-        conf_th = float(self.params.get("conf_th", 0.25))
-        iou_th = float(self.params.get("iou_th", 0.45))
+        conf_th = float(self.params.get("conf_thres", self.params.get("conf_th", 0.25)))
+        iou_th  = float(self.params.get("iou_thres",  self.params.get("iou_th",  0.45)))
+
         measure_mode = self.params.get("measure", "count")
         class_whitelist = self.params.get("class_whitelist", None)
 
@@ -130,84 +131,43 @@ class YOLOInROITool(BaseTool):
         if roi.ndim == 2:
             roi = cv.cvtColor(roi, cv.COLOR_GRAY2BGR)
 
-        # Predspracovanie (bezpečne len CLAHE/normalize na Y kanáli)
-        chain = (self.params or {}).get("preproc", []) or []
-        if chain:
-            try:
-                # prevedieme do YCrCb, aplikujeme len podporované kroky na Y
-                ycc = cv.cvtColor(roi, cv.COLOR_BGR2YCrCb)
-                Y = ycc[:, :, 0]
-                allowed = []
-                for st in chain:
-                    op = str(st.get("op","")).lower()
-                    if op in ("clahe","normalize"):
-                        allowed.append(st)
-                if allowed:
-                    # použijeme BaseTool helper na Y
-                    Y2 = self._apply_preproc_chain(Y, allowed, mask=None)
-                    ycc[:, :, 0] = Y2
-                    roi = cv.cvtColor(ycc, cv.COLOR_YCrCb2BGR)
-            except Exception:
-                pass
-
-        model = self._get_model(onnx_path)
-        boxes, cls_ids, cls_scores = model.infer(roi)
-
-
-        # filter conf + classes
-        keep = cls_scores >= conf_th
-        if class_whitelist is not None:
-            keep = keep & np.isin(cls_ids, np.array(class_whitelist))
-        boxes, cls_ids, cls_scores = boxes[keep], cls_ids[keep], cls_scores[keep]
-
-        # NMS
+        # measured
         if boxes.shape[0] > 0:
             keep_idx = _nms(boxes, cls_scores, iou_th=iou_th)
             boxes, cls_ids, cls_scores = boxes[keep_idx], cls_ids[keep_idx], cls_scores[keep_idx]
 
-        # measured
-        if boxes.shape[0] > 0:
-                # jednoduché NMS
-                idxs = cls_scores.argsort()[::-1]
-                keep_idx = []
-                while idxs.size > 0:
-                    i = idxs[0]; keep_idx.append(i)
-                    if idxs.size == 1: break
-                    xx1 = np.maximum(boxes[i,0], boxes[idxs[1:],0])
-                    yy1 = np.maximum(boxes[i,1], boxes[idxs[1:],1])
-                    xx2 = np.minimum(boxes[i,2], boxes[idxs[1:],2])
-                    yy2 = np.minimum(boxes[i,3], boxes[idxs[1:],3])
-                    w_ = np.maximum(0, xx2-xx1); h_ = np.maximum(0, yy2-yy1)
-                    inter = w_*h_
-                    union = (boxes[i,2]-boxes[i,0])*(boxes[i,3]-boxes[i,1]) + (boxes[idxs[1:],2]-boxes[idxs[1:],0])*(boxes[idxs[1:],3]-boxes[idxs[1:],1]) - inter
-                    iou = inter / (union + 1e-6)
-                    idxs = idxs[1:][iou <= iou_th]
-                boxes, cls_ids, cls_scores = boxes[keep_idx], cls_ids[keep_idx], cls_scores[keep_idx]
+        if boxes.shape[0] == 0:
+            measured = 0.0 if measure_mode == "count" else 0.0
+        else:
+            if measure_mode == "count":
+                measured = float(boxes.shape[0])
+            elif measure_mode == "max_conf":
+                measured = float(cls_scores.max())
+            else:
+                measured = float(cls_scores.mean())
 
-                if boxes.shape[0] == 0:
-                    measured = 0.0 if measure_mode == "count" else 0.0
-                else:
-                    if measure_mode == "count":
-                        measured = float(boxes.shape[0])
-                    elif measure_mode == "max_conf":
-                        measured = float(cls_scores.max())
-                    else:
-                        measured = float(cls_scores.mean())
+        lsl, usl = self.lsl, self.usl
+        ok = True
+        if lsl is not None and measured < lsl: ok = False
+        if usl is not None and measured > usl: ok = False
 
-                lsl, usl = self.lsl, self.usl
-                ok = True
-                if lsl is not None and measured < lsl: ok = False
-                if usl is not None and measured > usl: ok = False
+        overlay = roi.copy()
+        for b, cid, sc in zip(boxes.astype(int), cls_ids, cls_scores):
+            cv.rectangle(overlay, (b[0], b[1]), (b[2], b[3]), (0,255,0) if ok else (0,0,255), 2)
+            cv.putText(overlay, f"{cid}:{sc:.2f}", (b[0], max(0, b[1]-5)), cv.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
 
-                overlay = roi.copy()
-                for b, cid, sc in zip(boxes.astype(int), cls_ids, cls_scores):
-                    cv.rectangle(overlay, (b[0], b[1]), (b[2], b[3]), (0,255,0) if ok else (0,0,255), 2)
-                    cv.putText(overlay, f"{cid}:{sc:.2f}", (b[0], max(0, b[1]-5)), cv.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+        details = {
+            "roi_xywh": (x,y,w,h),
+            "detections": int(boxes.shape[0]),
+            "classes": cls_ids.tolist() if boxes.shape[0] else [],
+            "scores": cls_scores.tolist() if boxes.shape[0] else []
+        }
+        details["preproc_desc"] = pre_desc
+        if pre_preview is not None:
+            details["preproc_preview"] = pre_preview
 
-                details = {
-                    "roi_xywh": (x,y,w,h),
-                    "detections": int(boxes.shape[0]),
-                    "classes": cls_ids.tolist() if boxes.shape[0] else [],
-                    "scores": cls_scores.tolist() if boxes.shape[0] else []
-                }
-                return ToolResult(ok=ok, measured=measured, lsl=lsl, usl=usl, details=details, overlay=overlay)
+        return ToolResult(ok=ok, measured=measured, lsl=lsl, usl=usl, details=details, overlay=overlay)
+
+# alias kvôli spätnej kompatibilite s ostatnými importami
+class YoloROITool(YOLOInROITool):
+    pass

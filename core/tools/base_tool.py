@@ -106,3 +106,12 @@ class BaseTool(ABC):
                 continue
 
         return img
+    def _preproc_desc(self, chain: Optional[List[Dict[str, Any]]]) -> str:
+        if not chain:
+            return "—"
+        parts=[]
+        for st in chain:
+            op = st.get("op","?")
+            p  = ", ".join([f"{k}={v}" for k,v in st.items() if k!="op"])
+            parts.append(f"{op}({p})" if p else op)
+        return " → ".join(parts)

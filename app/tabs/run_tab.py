@@ -108,7 +108,7 @@ class RunTab(QtWidgets.QWidget):
         right.addWidget(self.btn_save_ok)
         right.addWidget(self.btn_save_nok)
         right.addWidget(self.live_panel)
-        right.addWidget(QtWidgets.QLabel("Posledné merania:"))
+        right.addWidget(QtWidgets.QLabel("Posledné merania: preproc"))
         right.addWidget(self.lbl_last)
         right.addStretch()
 
@@ -150,12 +150,12 @@ class RunTab(QtWidgets.QWidget):
         )
         self.lbl_latency.setText(f"lat: {out.get('elapsed_ms',0.0):.1f} ms")
         
+        
         # udrž strip synchronizovaný s počtom nástrojov a základným obrázkom
         tools = getattr(self.state.pipeline, "tools", []) or []
         ref_for_strip = getattr(self.state, "ref_img", None)
         if ref_for_strip is None:
             ref_for_strip = self._last_frame
-
         self.tool_strip.set_tools_if_needed(tools, ref_for_strip, self._last_frame)
 
 
@@ -190,6 +190,11 @@ class RunTab(QtWidgets.QWidget):
             units_str = f" {units}" if units else ""
             lines.append(f"{name} | hodnota={float(measured):.2f}{units_str}  LSL={lsl}  USL={usl}  -> {'OK' if ok_t else 'NOK'}")
 
+            # >>> NOVÉ: vypíš reťazec predspracovania, ak ho tool poslal
+            pre = details.get("preproc_desc")
+            if pre:
+                lines.append(f"   ↳ preproc: {pre}")
+
             # Edge-trace: metrika a štatistiky
             metric = details.get("metric")
             if metric == "coverage_pct":
@@ -214,6 +219,7 @@ class RunTab(QtWidgets.QWidget):
                     f"   ↳ measure={measure_name}  thresh={details.get('thresh')}  "
                     f"morph={details.get('morph_open')}  min_blob={details.get('min_blob_area')}"
                 )
+
 
         self.lbl_last.setPlainText("\n".join(lines))
 

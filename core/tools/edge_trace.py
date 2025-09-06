@@ -113,9 +113,13 @@ class _EdgeTraceBase(BaseTool):
             return ToolResult(False, 0.0, self.lsl, self.usl, {"error":"shape mask empty (nakresli tvar)", "roi_xywh": roi})
 
         # 4) Predspracovanie v ROI (len vnútri ROI; pre EDGE bez masiek)
+        pre_desc = "—"
+        pre_preview = None
         chain = p_global.get("preproc", []) or []
         if chain:
             roi_gray = self._apply_preproc_chain(roi_gray, chain, mask=None)
+            pre_desc = self._preproc_desc(chain)
+            pre_preview = cv.cvtColor(roi_gray, cv.COLOR_GRAY2BGR)
 
         # 5) Metrika
         canny_lo = int(p_global.get("canny_lo", 40))
@@ -146,6 +150,8 @@ class _EdgeTraceBase(BaseTool):
             "coverage_pct": float(stats["coverage_pct"]),
             "metric": metric,
         }
+        details["preproc_desc"] = pre_desc
+        details["preproc_preview"] = pre_preview
         return ToolResult(ok=ok, measured=measured, lsl=self.lsl, usl=self.usl, details=details, overlay=stats["overlay"])
 
 class EdgeTraceLineTool(_EdgeTraceBase):   # type = "_wip_edge_line"

@@ -54,6 +54,31 @@ def compose_overlay(frame_gray: np.ndarray, ref_shape: tuple, out: dict, only_id
             canvas[y:y+Hh, x:x+W] = cv.addWeighted(canvas[y:y+Hh, x:x+W], 0.6, ov, 0.4, 0)
             # ROI rámik
             cv.rectangle(canvas, (x,y), (x+W, y+Hh), (0, 180, 255), 2)
+            # -- PREPROC PREVIEW (ak je k dispozícii) --
+            pre = details.get("preproc_preview", None)
+            if pre is not None:
+                try:
+                    # uisti sa, že je BGR
+                    if pre.ndim == 2:
+                        pre = cv.cvtColor(pre, cv.COLOR_GRAY2BGR)
+                    # veľkosť náhľadu ~ 1/3 šírky ROI, minimálne 64 px
+                    tw = max(64, int(W * 0.33))
+                    th = int(pre.shape[0] * (tw / pre.shape[1]))
+                    pre_small = cv.resize(pre, (tw, th), interpolation=cv.INTER_AREA)
+                    # miesto: roh ROI s malým odsadením
+                    px, py = x + 6, y + 6
+                    # ohraničenie
+                    cv.rectangle(canvas, (px-2, py-2), (px+tw+2, py+th+2), (255, 210, 0), 1)
+                    # vlož
+                    roi_dst = canvas[py:py+th, px:px+tw]
+                    if roi_dst.shape[:2] == pre_small.shape[:2]:
+                        canvas[py:py+th, px:px+tw] = pre_small
+                    # štítok
+                    cv.rectangle(canvas, (px-2, py-18), (px+72, py-2), (255,210,0), -1)
+                    cv.putText(canvas, "PREPROC", (px+4, py-6), cv.FONT_HERSHEY_SIMPLEX, 0.4, (30,30,30), 1, cv.LINE_AA)
+                except Exception:
+                    pass
+
         except Exception:
             # nech runtime nespadne kvôli zlej ROI
             continue
