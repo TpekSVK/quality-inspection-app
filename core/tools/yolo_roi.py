@@ -130,8 +130,29 @@ class YOLOInROITool(BaseTool):
         if roi.ndim == 2:
             roi = cv.cvtColor(roi, cv.COLOR_GRAY2BGR)
 
+        # Predspracovanie (bezpečne len CLAHE/normalize na Y kanáli)
+        chain = (self.params or {}).get("preproc", []) or []
+        if chain:
+            try:
+                # prevedieme do YCrCb, aplikujeme len podporované kroky na Y
+                ycc = cv.cvtColor(roi, cv.COLOR_BGR2YCrCb)
+                Y = ycc[:, :, 0]
+                allowed = []
+                for st in chain:
+                    op = str(st.get("op","")).lower()
+                    if op in ("clahe","normalize"):
+                        allowed.append(st)
+                if allowed:
+                    # použijeme BaseTool helper na Y
+                    Y2 = self._apply_preproc_chain(Y, allowed, mask=None)
+                    ycc[:, :, 0] = Y2
+                    roi = cv.cvtColor(ycc, cv.COLOR_YCrCb2BGR)
+            except Exception:
+                pass
+
         model = self._get_model(onnx_path)
         boxes, cls_ids, cls_scores = model.infer(roi)
+
 
         # filter conf + classes
         keep = cls_scores >= conf_th

@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import cv2 as cv
 
+from app.widgets.preproc_catalog import PreprocDialog
 from storage.recipe_store_json import RecipeStoreJSON
 from app.widgets.roi_drawer import ROIDrawer
 from app.widgets.tools_catalog import ToolCatalogDialog
@@ -334,6 +335,12 @@ class BuilderTab(QtWidgets.QWidget):
         # 1) Predvoľba (hneď po type)
         right.addRow("Predvoľba", self.cmb_preset)
         right.addRow("", self.btn_preset)
+                # --- Predspracovanie (katalóg presetov) ---
+        self.btn_preproc = QtWidgets.QPushButton("Predspracovanie…")
+        self.lbl_preproc = QtWidgets.QLabel("—")
+        self.lbl_preproc.setStyleSheet("color:#aaa;")
+        right.addRow("Predspracovanie", self.btn_preproc)
+        right.addRow("Reťazec", self.lbl_preproc)
 
         right.addRow(QtWidgets.QLabel("<hr>"))
 
@@ -387,6 +394,7 @@ class BuilderTab(QtWidgets.QWidget):
         btn_save.clicked.connect(self.save_recipe)
         self.list_tools.currentRowChanged.connect(self._on_tool_selected)
         self.btn_catalog.clicked.connect(self.open_tool_catalog)
+        self.btn_preproc.clicked.connect(self.open_preproc_dialog)
         self.btn_del.clicked.connect(self.del_tool)
         self.btn_mode_roi.toggled.connect(self._on_mode_roi)
         self.btn_mode_mask.toggled.connect(self._on_mode_mask)
@@ -554,6 +562,11 @@ class BuilderTab(QtWidgets.QWidget):
         self.roi_view.set_roi(x,y,w,h)
 
         params = t.get("params",{}) or {}
+
+        # preproc zhrnutie
+        pre = params.get("preproc", []) or []
+        self.lbl_preproc.setText(self._preproc_summary(pre))
+
         masks = params.get("mask_rects", []) or []
         self.roi_view.set_masks(masks)
         self._refresh_mask_list()
@@ -1249,3 +1262,29 @@ class BuilderTab(QtWidgets.QWidget):
             f"J = {J:.3f}\n\n"
             "Klikni „Použiť zmeny“ a potom „Uložiť verziu“."
         )
+        
+    def _preproc_summary(self, chain):
+        if not chain: return "—"
+        parts=[]
+        for st in chain:
+            op = st.get("op","?")
+            p  = ", ".join([f"{k}={v}" for k,v in st.items() if k!="op"])
+            parts.append(f"{op}({p})" if p else op)
+        return " → ".join(parts)
+
+    def open_preproc_dialog(self):
+        idx = self.current_tool_idx
+        if idx is None or idx < 0:
+            QtWidgets.QMessageBox.information(self, "Predspracovanie", "Najprv vyber nástroj v zozname.")
+            return
+        t = self.recipe.get("tools", [])[idx]
+        params = t.setdefault("params", {})
+        current = params.get("preproc", []) or []
+
+        dlg = PreprocDialog(self, initial_chain=current)
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        chain = dlg.selected_chain()
+        params["preproc"] = chain
+        self.lbl_preproc.setText(self._preproc_summary(chain))
+        QtWidgets.QMessageBox.information(self, "Predspracovanie", "Predspracovanie bolo nastavené pre tento nástroj. Nezabudni „Použiť zmeny…“ a potom „Uložiť verziu“.")

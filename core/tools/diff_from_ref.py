@@ -87,15 +87,22 @@ class DiffFromRefTool(BaseTool):
             details = {"roi_xywh": (x,y,w,h), "error": "ROI out of bounds after clipping"}
             return ToolResult(ok=False, measured=0.0, lsl=self.lsl, usl=self.usl, details=details, overlay=None)
 
-        # 4) aplikuj masku (0=ignoruj)
+        # 4) Predspracovanie (rovnaké na REF aj CUR), rešpektuje masku (0=ignoruj)
+        chain = params.get("preproc", []) or []
+        if chain:
+            roi_ref = self._apply_preproc_chain(roi_ref, chain, mask=roi_mask)
+            roi_cur = self._apply_preproc_chain(roi_cur, chain, mask=roi_mask)
+
+        # 5) aplikuj masku (nulujeme ignorované oblasti pre diff)
         roi_ref = cv.bitwise_and(roi_ref, roi_mask)
         roi_cur = cv.bitwise_and(roi_cur, roi_mask)
 
-        # 5) diff + prahovanie
+        # 6) diff + prahovanie
         blur = int(params.get("blur", 3))
         if blur > 0 and blur % 2 == 1:
             roi_ref = cv.GaussianBlur(roi_ref, (blur, blur), 0)
             roi_cur = cv.GaussianBlur(roi_cur, (blur, blur), 0)
+
 
         diff = cv.absdiff(roi_cur, roi_ref)
         thresh_val = int(params.get("thresh", 25))

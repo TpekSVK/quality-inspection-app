@@ -112,10 +112,16 @@ class _EdgeTraceBase(BaseTool):
         if band.sum() == 0:
             return ToolResult(False, 0.0, self.lsl, self.usl, {"error":"shape mask empty (nakresli tvar)", "roi_xywh": roi})
 
-        # 4) Metrika
+        # 4) Predspracovanie v ROI (len vnútri ROI; pre EDGE bez masiek)
+        chain = p_global.get("preproc", []) or []
+        if chain:
+            roi_gray = self._apply_preproc_chain(roi_gray, chain, mask=None)
+
+        # 5) Metrika
         canny_lo = int(p_global.get("canny_lo", 40))
         canny_hi = int(p_global.get("canny_hi", 120))
         stats = _edge_stats(roi_gray, band, canny_lo, canny_hi)
+
 
         metric = str(p_global.get("metric", "px_gap")).lower()
         if metric == "coverage_pct":
@@ -124,7 +130,7 @@ class _EdgeTraceBase(BaseTool):
             metric = "px_gap"
             measured = float(stats["gap_px"])
 
-        # 5) Limity a výsledok
+        # 6) Limity a výsledok
         lsl = self.lsl if self.lsl is not None else float("-inf")
         usl = self.usl if self.usl is not None else float("+inf")
         ok = (lsl <= measured <= usl)

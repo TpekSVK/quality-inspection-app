@@ -1,7 +1,7 @@
 # core/tools/presence_absence.py
 import cv2 as cv
 import numpy as np
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, List
 from .base_tool import BaseTool, ToolResult
 
 def _warp_roi(img: np.ndarray, H: Optional[np.ndarray], roi: Tuple[int,int,int,int]) -> np.ndarray:
@@ -12,13 +12,26 @@ def _warp_roi(img: np.ndarray, H: Optional[np.ndarray], roi: Tuple[int,int,int,i
     else:
         return img[y:y+h, x:x+w]
 
+def _mask_from_rects_ignore(full_shape: Tuple[int,int], rects: List[List[int]]) -> np.ndarray:
+    H, W = full_shape
+    m = np.full((H, W), 255, np.uint8)
+    for r in rects or []:
+        x,y,w,h = [int(v) for v in r]
+        x1 = max(0, x); y1 = max(0, y)
+        x2 = min(W, x+w); y2 = min(H, y+h)
+        if x2 > x1 and y2 > y1:
+            m[y1:y2, x1:x2] = 0
+    return m
+
 class PresenceAbsenceTool(BaseTool):
-    USES_MASKS = True  
+    USES_MASKS = True
+
     def run(self, img_ref: np.ndarray, img_cur: np.ndarray, fixture_transform: Optional[np.ndarray]) -> ToolResult:
         x, y, w, h = self.roi_xywh
         roi_cur = _warp_roi(img_cur, fixture_transform, (x,y,w,h))
         if roi_cur.ndim == 3: roi_cur = cv.cvtColor(roi_cur, cv.COLOR_BGR2GRAY)
 
+        # šablóna – z params alebo z ROI referencie
         tpl = self.params.get("template", None)
         if tpl is None:
             roi_ref = _warp_roi(img_ref, fixture_transform, (x,y,w,h))
@@ -26,6 +39,21 @@ class PresenceAbsenceTool(BaseTool):
             tpl = roi_ref.copy()
         if tpl.ndim == 3: tpl = cv.cvtColor(tpl, cv.COLOR_BGR2GRAY)
 
+        # masky (ignorovať časti)
+        mask_rects = (self.params or {}).get("mask_rects", []) or []
+        if mask_rects:
+            full_mask = _mask_from_rects_ignore((roi_cur.shape[0], roi_cur.shape[1]), rects=[ [rx-x, ry-y, rw, rh] for (rx,ry,rw,rh) in mask_rects ])
+
+        else:
+            full_mask = None
+
+        # predspracovanie (rovnako na tpl aj cur), rešpektuj masku
+        chain = (self.params or {}).get("preproc", []) or []
+        if chain:
+            roi_cur = self._apply_preproc_chain(roi_cur, chain, mask=full_mask)
+            tpl     = self._apply_preproc_chain(tpl,     chain, mask=full_mask)
+
+        # template match
         method = self.params.get("method", cv.TM_CCOEFF_NORMED)
         res = cv.matchTemplate(roi_cur, tpl, method)
         min_val, max_val, min_loc, max_loc = cv.minMaxLoc(res)
