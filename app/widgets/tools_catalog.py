@@ -374,6 +374,33 @@ class ToolCatalogDialog(QtWidgets.QDialog):
                 "desc":"Normalised Cross-Correlation proti menšej šablóne. Čoskoro.",
                 "enabled": False
             },
+            {
+                "id":"template_ncc",
+                "title":"Šablóna (NCC) – skóre",
+                "type":"_wip_template",
+                "params":{},
+                "units":"score",
+                "desc":"Normalised Cross-Correlation proti menšej šablóne. Čoskoro.",
+                "enabled": False
+            },
+            {
+                "id":"template_ncc",
+                "title":"Šablóna (NCC)",
+                "type":"template_match",
+                "params":{
+                    "mask_rects":[],
+                    "preproc":[],
+                    "min_score":0.70,
+                    "max_matches":5,
+                    "min_distance":12,
+                    "mode":"best"     # "best" | "count"
+                },
+                "units":"score",
+                "desc":"Hľadanie vzoru: šablóna = referenčná ROI. Metrika: najlepšie skóre alebo počet nálezov nad min_score.",
+                "enabled": True
+            },
+
+
         ]
 
         measure_tools = [
@@ -420,6 +447,25 @@ class ToolCatalogDialog(QtWidgets.QDialog):
                 "desc":"Spočíta objekty v ROI po binarizácii (Otsu). Rešpektuje masky a predspracovanie.",
                 "enabled": True
             },
+            {
+                "id":"hough_circle_live",
+                "title":"Otvor/kruh (Hough)",
+                "type":"hough_circle",
+                "params":{
+                    "mask_rects":[],
+                    "preproc":[],
+                    "dp":1.2,
+                    "minDist":12.0,
+                    "param1":100.0,
+                    "param2":30.0,
+                    "minRadius":0,
+                    "maxRadius":0
+                },
+                "units":"ks",
+                "desc":"Detekcia kruhov v ROI (po preproc). Výstup: počet kruhov.",
+                "enabled": True
+            },
+
 
 
 

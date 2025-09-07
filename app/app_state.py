@@ -14,6 +14,9 @@ from core.tools.presence_absence import PresenceAbsenceTool
 from core.tools.yolo_roi import YOLOInROITool
 from core.tools.edge_trace import EdgeTraceLineTool, EdgeTraceCircleTool, EdgeTraceCurveTool
 from core.tools.blob_count import BlobCountTool
+from core.tools.template_match import TemplateMatchTool
+from core.tools.hough_circle import HoughCircleTool
+
 
 from interfaces.camera import ICamera
 
@@ -129,6 +132,22 @@ class AppState:
                     params=t.get("params", {"min_area": 120, "invert": False, "preproc": [], "mask_rects": []}),
                     lsl=t.get("lsl", None), usl=t.get("usl", None), units=t.get("units", "ks")
                 ))
+            elif typ == "template_match":
+                tools.append(TemplateMatchTool(
+                    name=t.get("name", "Template NCC"),
+                    roi_xywh=tuple(t.get("roi_xywh", [0,0,200,200])),
+                    params=t.get("params", {"min_score":0.7, "max_matches":5, "min_distance":12, "mode":"best", "preproc":[], "mask_rects":[]}),
+                    lsl=t.get("lsl", None), usl=t.get("usl", None), units=t.get("units", "score")
+                ))
+
+            elif typ == "hough_circle":
+                tools.append(HoughCircleTool(
+                    name=t.get("name", "Hough circle"),
+                    roi_xywh=tuple(t.get("roi_xywh", [0,0,200,200])),
+                    params=t.get("params", {"dp":1.2,"minDist":12.0,"param1":100.0,"param2":30.0,"minRadius":0,"maxRadius":0,"preproc":[],"mask_rects":[]}),
+                    lsl=t.get("lsl", None), usl=t.get("usl", None), units=t.get("units", "ks")
+                ))
+
 
             else:
                 # neznámy typ – preskoč (môžeme zalogovať ak chceš)

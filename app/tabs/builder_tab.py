@@ -329,6 +329,36 @@ class BuilderTab(QtWidgets.QWidget):
         g_y.addRow("IoU threshold:", self.dbl_iou)
         g_y.addRow("Max detections:", self.spin_max_det)
 
+        # 4) Template Match (NCC)
+        self.grp_tmpl = QtWidgets.QWidget()
+        g_tm = QtWidgets.QFormLayout(self.grp_tmpl)
+        self.dbl_tm_min = QtWidgets.QDoubleSpinBox(); self.dbl_tm_min.setRange(0.0,1.0); self.dbl_tm_min.setDecimals(3); self.dbl_tm_min.setValue(0.70)
+        self.spin_tm_max = QtWidgets.QSpinBox(); self.spin_tm_max.setRange(1,999); self.spin_tm_max.setValue(5)
+        self.spin_tm_dist = QtWidgets.QSpinBox(); self.spin_tm_dist.setRange(1,999); self.spin_tm_dist.setValue(12)
+        self.cmb_tm_mode = QtWidgets.QComboBox(); self.cmb_tm_mode.addItems(["Najlepšie skóre", "Počet nálezov"])
+        self.grp_tmpl.setToolTip("Template Match: šablóna = referenčná ROI. Vyhodnotenie: najlepšie skóre alebo počet nálezov nad min_score.")
+        g_tm.addRow("Min. skóre (0–1):", self.dbl_tm_min)
+        g_tm.addRow("Max. nálezov:", self.spin_tm_max)
+        g_tm.addRow("Min. vzdialenosť (px):", self.spin_tm_dist)
+        g_tm.addRow("Režim:", self.cmb_tm_mode)
+
+        # 5) Hough Circle
+        self.grp_hough = QtWidgets.QWidget()
+        g_hc = QtWidgets.QFormLayout(self.grp_hough)
+        self.dbl_hc_dp = QtWidgets.QDoubleSpinBox(); self.dbl_hc_dp.setRange(0.1,5.0); self.dbl_hc_dp.setSingleStep(0.1); self.dbl_hc_dp.setValue(1.2)
+        self.dbl_hc_minDist = QtWidgets.QDoubleSpinBox(); self.dbl_hc_minDist.setRange(1.0,999.0); self.dbl_hc_minDist.setValue(12.0)
+        self.dbl_hc_p1 = QtWidgets.QDoubleSpinBox(); self.dbl_hc_p1.setRange(1.0,500.0); self.dbl_hc_p1.setValue(100.0)
+        self.dbl_hc_p2 = QtWidgets.QDoubleSpinBox(); self.dbl_hc_p2.setRange(1.0,500.0); self.dbl_hc_p2.setValue(30.0)
+        self.spin_hc_minR = QtWidgets.QSpinBox(); self.spin_hc_minR.setRange(0,2000); self.spin_hc_minR.setValue(0)
+        self.spin_hc_maxR = QtWidgets.QSpinBox(); self.spin_hc_maxR.setRange(0,2000); self.spin_hc_maxR.setValue(0)
+        self.grp_hough.setToolTip("Hough kruhy: počet kruhov v ROI. Nastav parametre podľa veľkosti otvorov.")
+        g_hc.addRow("dp:", self.dbl_hc_dp)
+        g_hc.addRow("minDist (px):", self.dbl_hc_minDist)
+        g_hc.addRow("Canny param1:", self.dbl_hc_p1)
+        g_hc.addRow("Akum. prah (param2):", self.dbl_hc_p2)
+        g_hc.addRow("minRadius (px):", self.spin_hc_minR)
+        g_hc.addRow("maxRadius (px):", self.spin_hc_maxR)
+
         # 2b) Blob-count (počet objektov) – rozšírené
         self.grp_blob = QtWidgets.QWidget()
         g_blob = QtWidgets.QFormLayout(self.grp_blob)
@@ -358,7 +388,7 @@ class BuilderTab(QtWidgets.QWidget):
 
 
         # default: skryť všetky skupiny – do FormLayoutu ich pridávame nižšie v sekcii „Jednotné poradie“
-        for grp in (self.grp_diff, self.grp_edge, self.grp_presence, self.grp_yolo, self.grp_blob):
+        for grp in (self.grp_diff, self.grp_edge, self.grp_presence, self.grp_yolo, self.grp_blob, self.grp_tmpl, self.grp_hough):
             grp.hide()
 
 
@@ -402,6 +432,9 @@ class BuilderTab(QtWidgets.QWidget):
         right.addRow(self.grp_presence)
         right.addRow(self.grp_yolo)
         right.addRow(self.grp_blob)
+        right.addRow(self.grp_tmpl)
+        right.addRow(self.grp_hough)
+
 
 
         right.addRow(QtWidgets.QLabel("<hr>"))
@@ -582,6 +615,9 @@ class BuilderTab(QtWidgets.QWidget):
                 "_wip_edge_line":"Vada na priamke",
                 "_wip_edge_circle":"Vada na kružnici",
                 "_wip_edge_curve":"Vada na krivke",
+                "template_match":"Šablóna (NCC)",
+                "hough_circle":"Otvor/kruh (Hough)",
+
             }.get(typ, typ)
 
             nm = t.get("name","Kontrola")
@@ -607,6 +643,9 @@ class BuilderTab(QtWidgets.QWidget):
             "_wip_edge_line":"Vada na priamke",
             "_wip_edge_circle":"Vada na kružnici",
             "_wip_edge_curve":"Vada na krivke",
+            "template_match":"Šablóna (NCC)",
+            "hough_circle":"Otvor/kruh (Hough)",
+
         }.get(typ, typ)
 
 
@@ -619,6 +658,26 @@ class BuilderTab(QtWidgets.QWidget):
         self.roi_view.set_roi(x,y,w,h)
 
         params = t.get("params",{}) or {}
+
+        # --- Template Match ---
+        if (typ or "").lower() == "template_match":
+            self.dbl_tm_min.setValue(float(params.get("min_score", 0.70)))
+            self.spin_tm_max.setValue(int(params.get("max_matches", 5)))
+            self.spin_tm_dist.setValue(int(params.get("min_distance", 12)))
+            self.cmb_tm_mode.setCurrentText("Počet nálezov" if str(params.get("mode","best")).lower()=="count" else "Najlepšie skóre")
+            # jednotky podľa režimu
+            self.edit_units.setText("ks" if str(params.get("mode","best")).lower()=="count" else "score")
+
+        # --- Hough Circle ---
+        if (typ or "").lower() == "hough_circle":
+            self.dbl_hc_dp.setValue(float(params.get("dp", 1.2)))
+            self.dbl_hc_minDist.setValue(float(params.get("minDist", 12.0)))
+            self.dbl_hc_p1.setValue(float(params.get("param1", 100.0)))
+            self.dbl_hc_p2.setValue(float(params.get("param2", 30.0)))
+            self.spin_hc_minR.setValue(int(params.get("minRadius", 0)))
+            self.spin_hc_maxR.setValue(int(params.get("maxRadius", 0)))
+            self.edit_units.setText("ks")
+
 
         # preproc zhrnutie
         pre = params.get("preproc", []) or []
@@ -759,7 +818,10 @@ class BuilderTab(QtWidgets.QWidget):
         return (typ or "").lower() in {"_wip_edge_line", "_wip_edge_circle", "_wip_edge_curve"}
 
     def _supports_masks(self, typ: str) -> bool:
-        return (typ or "").lower() in {"diff_from_ref", "presence_absence", "yolo_roi", "blob_count"}
+        return (typ or "").lower() in {
+            "diff_from_ref", "presence_absence", "yolo_roi", "blob_count",
+            "template_match", "hough_circle"
+        }
 
     def _supports_diff(self, typ: str) -> bool:
         return (typ or "").lower() == "diff_from_ref"
@@ -778,6 +840,8 @@ class BuilderTab(QtWidgets.QWidget):
         is_pa   = self._supports_presence(typ)
         is_yolo = self._supports_yolo(typ)
         is_blob = (typ or "").lower() == "blob_count"
+        is_tmpl  = (typ or "").lower() == "template_match"
+        is_hough = (typ or "").lower() == "hough_circle"
 
         # shape ovládanie (štetce + šírka profilu)
         self.btn_mode_line.setVisible(shape)
@@ -801,6 +865,8 @@ class BuilderTab(QtWidgets.QWidget):
         self.grp_presence.setVisible(is_pa)
         self.grp_yolo.setVisible(is_yolo)
         self.grp_blob.setVisible(is_blob)
+        self.grp_tmpl.setVisible(is_tmpl)
+        self.grp_hough.setVisible(is_hough)
 
         # ROI a „Použiť zmeny“ nech sú stále viditeľné
         self.btn_mode_roi.setVisible(True)
@@ -1046,6 +1112,23 @@ class BuilderTab(QtWidgets.QWidget):
             p["metric"] = "count" if "počet" in met_txt else "sum_area"
             # nastav jednotky podľa metriky
             t["units"] = "ks" if p["metric"] == "count" else "px²"
+        elif t.get("type") == "template_match":
+            p["min_score"]   = float(self.dbl_tm_min.value())
+            p["max_matches"] = int(self.spin_tm_max.value())
+            p["min_distance"]= int(self.spin_tm_dist.value())
+            mode_txt = self.cmb_tm_mode.currentText().lower()
+            p["mode"] = "count" if "počet" in mode_txt else "best"
+            # jednotky
+            t["units"] = "ks" if p["mode"] == "count" else "score"
+
+        elif t.get("type") == "hough_circle":
+            p["dp"]       = float(self.dbl_hc_dp.value())
+            p["minDist"]  = float(self.dbl_hc_minDist.value())
+            p["param1"]   = float(self.dbl_hc_p1.value())
+            p["param2"]   = float(self.dbl_hc_p2.value())
+            p["minRadius"]= int(self.spin_hc_minR.value())
+            p["maxRadius"]= int(self.spin_hc_maxR.value())
+            t["units"]    = "ks"
 
                     
         self._refresh_tool_list()

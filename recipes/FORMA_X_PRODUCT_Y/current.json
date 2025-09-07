@@ -124,6 +124,27 @@
       "lsl": null,
       "usl": 200.0,
       "units": "px²"
+    },
+    {
+      "type": "template_match",
+      "name": "Šablóna (NCC)",
+      "roi_xywh": [
+        170,
+        140,
+        82,
+        82
+      ],
+      "params": {
+        "mask_rects": [],
+        "max_matches": 5,
+        "min_distance": 12,
+        "min_score": 0.7,
+        "mode": "count",
+        "preproc": []
+      },
+      "lsl": null,
+      "usl": 200.0,
+      "units": "ks"
     }
   ],
   "models": {},
