@@ -126,48 +126,123 @@ class YOLOInROITool(BaseTool):
         measure_mode = self.params.get("measure", "count")
         class_whitelist = self.params.get("class_whitelist", None)
 
-        x, y, w, h = self.roi_xywh
-        roi = _warp_roi(img_cur, fixture_transform, (x,y,w,h))
+        x, y, w, h = [int(v) for v in self.roi_xywh]
+
+        # najprv zarovnaj celý current snímok do súradníc REFERENCIE
+        if fixture_transform is not None:
+            cur_aligned = cv.warpPerspective(img_cur, fixture_transform, (img_ref.shape[1], img_ref.shape[0]))
+        elif img_cur.shape[:2] != img_ref.shape[:2]:
+            # fallback: ak nie je H, zjednoť rozmer na rozmer referencie
+            cur_aligned = cv.resize(img_cur, (img_ref.shape[1], img_ref.shape[0]), interpolation=cv.INTER_LINEAR)
+        else:
+            cur_aligned = img_cur
+
+        # až teraz vyrež ROI v referenčných súradniciach
+        roi = cur_aligned[y:y+h, x:x+w]
         if roi.ndim == 2:
             roi = cv.cvtColor(roi, cv.COLOR_GRAY2BGR)
 
-        # measured
+
+        # -------------------- MASKA v ROI (255 = analyzuj, 0 = ignoruj) --------------------
+        full_mask = None
+        mask_rects = (self.params or {}).get("mask_rects", []) or []
+        if mask_rects:
+            full_mask = np.full((h, w), 255, np.uint8)
+            for (rx, ry, rw, rh) in mask_rects:
+                fx = max(0, int(rx) - x)
+                fy = max(0, int(ry) - y)
+                fw = max(0, min(int(rw), w - fx))
+                fh = max(0, min(int(rh), h - fy))
+                if fw > 0 and fh > 0:
+                    full_mask[fy:fy+fh, fx:fx+fw] = 0
+
+        # -------------------- PREPROC (len bezpečné op na Y-kanáli) --------------------
+        pre_desc = "—"
+        pre_preview = None
+        chain = (self.params or {}).get("preproc", []) or []
+        allowed = []
+        for st in chain:
+            op = str(st.get("op", "")).lower()
+            if op in ("clahe", "normalize", "clip", "equalize"):
+                allowed.append(st)
+
+        if allowed:
+            try:
+                ycc = cv.cvtColor(roi, cv.COLOR_BGR2YCrCb)
+                Y = ycc[:, :, 0]
+                Y2 = self._apply_preproc_chain(Y, allowed, mask=full_mask)  # maska je (h,w) v ROI súradniciach
+                ycc[:, :, 0] = Y2
+                roi = cv.cvtColor(ycc, cv.COLOR_YCrCb2BGR)
+                pre_desc = self._preproc_desc(allowed)
+                pre_preview = cv.cvtColor(cv.cvtColor(roi, cv.COLOR_BGR2GRAY), cv.COLOR_GRAY2BGR)
+            except Exception:
+                pass
+
+        # -------------------- INFER YOLO v ROI --------------------
+        model = self._get_model(onnx_path)
+        xyxy, cls_ids, cls_scores = model.infer(roi)
+
+        # filter podľa confidence + class whitelist
+        keep = np.where(cls_scores >= float(conf_th))[0]
+        if keep.size > 0 and class_whitelist:
+            keep = np.array([i for i in keep if int(cls_ids[i]) in set(class_whitelist)], dtype=int)
+        if keep.size > 0:
+            boxes = xyxy[keep]
+            cls_ids = cls_ids[keep]
+            cls_scores = cls_scores[keep]
+        else:
+            boxes = np.zeros((0, 4), dtype=np.float32)
+            cls_ids = np.zeros((0,), dtype=np.int32)
+            cls_scores = np.zeros((0,), dtype=np.float32)
+
+        # NMS
         if boxes.shape[0] > 0:
             keep_idx = _nms(boxes, cls_scores, iou_th=iou_th)
-            boxes, cls_ids, cls_scores = boxes[keep_idx], cls_ids[keep_idx], cls_scores[keep_idx]
+            if len(keep_idx) > 0:
+                boxes = boxes[keep_idx]
+                cls_ids = cls_ids[keep_idx]
+                cls_scores = cls_scores[keep_idx]
+            else:
+                boxes = np.zeros((0, 4), dtype=np.float32)
+                cls_ids = np.zeros((0,), dtype=np.int32)
+                cls_scores = np.zeros((0,), dtype=np.float32)
 
+        # -------------------- METRIKA --------------------
         if boxes.shape[0] == 0:
-            measured = 0.0 if measure_mode == "count" else 0.0
+            measured = 0.0
         else:
             if measure_mode == "count":
                 measured = float(boxes.shape[0])
             elif measure_mode == "max_conf":
                 measured = float(cls_scores.max())
-            else:
+            else:  # "mean_conf"
                 measured = float(cls_scores.mean())
 
         lsl, usl = self.lsl, self.usl
         ok = True
-        if lsl is not None and measured < lsl: ok = False
-        if usl is not None and measured > usl: ok = False
+        if lsl is not None and measured < lsl:
+            ok = False
+        if usl is not None and measured > usl:
+            ok = False
 
+        # -------------------- OVERLAY v ROI --------------------
         overlay = roi.copy()
         for b, cid, sc in zip(boxes.astype(int), cls_ids, cls_scores):
-            cv.rectangle(overlay, (b[0], b[1]), (b[2], b[3]), (0,255,0) if ok else (0,0,255), 2)
-            cv.putText(overlay, f"{cid}:{sc:.2f}", (b[0], max(0, b[1]-5)), cv.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+            cv.rectangle(overlay, (int(b[0]), int(b[1])), (int(b[2]), int(b[3])), (0,255,0) if ok else (0,0,255), 2)
+            cv.putText(overlay, f"{int(cid)}:{float(sc):.2f}", (int(b[0]), max(0, int(b[1])-5)),
+                       cv.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
 
         details = {
-            "roi_xywh": (x,y,w,h),
+            "roi_xywh": (x, y, w, h),
             "detections": int(boxes.shape[0]),
             "classes": cls_ids.tolist() if boxes.shape[0] else [],
-            "scores": cls_scores.tolist() if boxes.shape[0] else []
+            "scores": cls_scores.tolist() if boxes.shape[0] else [],
+            "preproc_desc": pre_desc
         }
-        details["preproc_desc"] = pre_desc
         if pre_preview is not None:
             details["preproc_preview"] = pre_preview
 
         return ToolResult(ok=ok, measured=measured, lsl=lsl, usl=usl, details=details, overlay=overlay)
-
 # alias kvôli spätnej kompatibilite s ostatnými importami
 class YoloROITool(YOLOInROITool):
     pass

@@ -112,14 +112,29 @@ class _EdgeTraceBase(BaseTool):
         if band.sum() == 0:
             return ToolResult(False, 0.0, self.lsl, self.usl, {"error":"shape mask empty (nakresli tvar)", "roi_xywh": roi})
 
-        # 4) Predspracovanie v ROI (len vnútri ROI; pre EDGE bez masiek)
+        # 4) Predspracovanie v ROI (len vnútri ROI; rešpektuj masky)
         pre_desc = "—"
         pre_preview = None
+
+        # postav masku v rámci ROI (255 = analyzuj, 0 = ignoruj)
+        full_mask = None
+        mask_rects = (self.params or {}).get("mask_rects", []) or []
+        if mask_rects:
+            full_mask = np.full((h, w), 255, np.uint8)
+            for (rx, ry, rw, rh) in mask_rects:
+                fx = max(0, int(rx) - x)
+                fy = max(0, int(ry) - y)
+                fw = max(0, min(int(rw), w - fx))
+                fh = max(0, min(int(rh), h - fy))
+                if fw > 0 and fh > 0:
+                    full_mask[fy:fy+fh, fx:fx+fw] = 0
+
         chain = p_global.get("preproc", []) or []
         if chain:
-            roi_gray = self._apply_preproc_chain(roi_gray, chain, mask=None)
+            roi_gray = self._apply_preproc_chain(roi_gray, chain, mask=full_mask)
             pre_desc = self._preproc_desc(chain)
             pre_preview = cv.cvtColor(roi_gray, cv.COLOR_GRAY2BGR)
+
 
         # 5) Metrika
         canny_lo = int(p_global.get("canny_lo", 40))

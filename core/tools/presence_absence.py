@@ -27,17 +27,28 @@ class PresenceAbsenceTool(BaseTool):
     USES_MASKS = True
 
     def run(self, img_ref: np.ndarray, img_cur: np.ndarray, fixture_transform: Optional[np.ndarray]) -> ToolResult:
-        x, y, w, h = self.roi_xywh
-        roi_cur = _warp_roi(img_cur, fixture_transform, (x,y,w,h))
-        if roi_cur.ndim == 3: roi_cur = cv.cvtColor(roi_cur, cv.COLOR_BGR2GRAY)
+        x, y, w, h = [int(v) for v in self.roi_xywh]
 
+        # aktuálny obrázok najprv premapuj do rozmeru referencie
+        if fixture_transform is not None:
+            cur_aligned = cv.warpPerspective(img_cur, fixture_transform, (img_ref.shape[1], img_ref.shape[0]))
+        elif img_cur.shape[:2] != img_ref.shape[:2]:
+            cur_aligned = cv.resize(img_cur, (img_ref.shape[1], img_ref.shape[0]), interpolation=cv.INTER_LINEAR)
+        else:
+            cur_aligned = img_cur
+
+        roi_cur = cur_aligned[y:y+h, x:x+w]
+        if roi_cur.ndim == 3:
+            roi_cur = cv.cvtColor(roi_cur, cv.COLOR_BGR2GRAY)
         # šablóna – z params alebo z ROI referencie
         tpl = self.params.get("template", None)
         if tpl is None:
-            roi_ref = _warp_roi(img_ref, fixture_transform, (x,y,w,h))
-            if roi_ref.ndim == 3: roi_ref = cv.cvtColor(roi_ref, cv.COLOR_BGR2GRAY)
+            roi_ref = img_ref[y:y+h, x:x+w]
+            if roi_ref.ndim == 3:
+                roi_ref = cv.cvtColor(roi_ref, cv.COLOR_BGR2GRAY)
             tpl = roi_ref.copy()
-        if tpl.ndim == 3: tpl = cv.cvtColor(tpl, cv.COLOR_BGR2GRAY)
+        if tpl.ndim == 3:
+            tpl = cv.cvtColor(tpl, cv.COLOR_BGR2GRAY)
 
         # masky (ignorovať časti)
         mask_rects = (self.params or {}).get("mask_rects", []) or []

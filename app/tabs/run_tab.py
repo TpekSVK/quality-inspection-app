@@ -139,7 +139,51 @@ class RunTab(QtWidgets.QWidget):
         layout.addLayout(top, 5)
         layout.addWidget(self.film, 1)
 
+    def _match_ref_size(self, frm: np.ndarray) -> np.ndarray:
+        ref = getattr(self.state, "ref_img", None)
+        if ref is None or frm is None:
+            return frm
+        hr, wr = ref.shape[:2]
+        h, w = frm.shape[:2]
+        return frm if (h, w) == (hr, wr) else cv.resize(frm, (wr, hr), interpolation=cv.INTER_AREA)
 
+    def _apply_preproc_view_into_frame(self, base_img: np.ndarray, tool) -> np.ndarray:
+        import numpy as np, cv2 as cv
+        img = base_img.copy()
+        if tool is None or getattr(tool, "roi_xywh", None) is None:
+            return img
+        x, y, w, h = [int(v) for v in tool.roi_xywh]
+        H, W = img.shape[:2]
+        x = max(0, min(x, W-1)); y = max(0, min(y, H-1))
+        w = max(0, min(w, W - x)); h = max(0, min(h, H - y))
+        if w <= 0 or h <= 0: return img
+
+        params = getattr(tool, "params", {}) or {}
+        chain  = params.get("preproc", []) or []
+
+        # maska v ROI (255=analyzuj, 0=ignoruj)
+        m = None
+        mrects = params.get("mask_rects", []) or []
+        if mrects:
+            m = np.full((h, w), 255, np.uint8)
+            for (rx, ry, rw, rh) in mrects:
+                fx = max(0, int(rx)-x); fy = max(0, int(ry)-y)
+                fw = max(0, min(int(rw), w - fx)); fh = max(0, min(int(rh), h - fy))
+                if fw>0 and fh>0: m[fy:fy+fh, fx:fx+fw] = 0
+
+        roi = img[y:y+h, x:x+w]
+        was_bgr = (roi.ndim == 3)
+        roi_gray = roi if roi.ndim == 2 else cv.cvtColor(roi, cv.COLOR_BGR2GRAY)
+        if chain:
+            try:
+                roi_proc = tool._apply_preproc_chain(roi_gray, chain, mask=m)
+            except Exception:
+                roi_proc = roi_gray
+        else:
+            roi_proc = roi_gray
+        if was_bgr: roi_proc = cv.cvtColor(roi_proc, cv.COLOR_GRAY2BGR)
+        img[y:y+h, x:x+w] = roi_proc
+        return img
 
 
 
@@ -154,6 +198,92 @@ class RunTab(QtWidgets.QWidget):
                 self.plc = None
 
  
+    # ---------- Render ----------
+
+    # --- helpers: dorovnanie rozmeru + preproc náhľadu v ROI ---
+    def _match_ref_size(self, frm: np.ndarray) -> np.ndarray:
+        """Ak máme referenčný obrázok a rozmer nesedí, zmeň veľkosť framu na rozmer referencie."""
+        ref = getattr(self.state, "ref_img", None)
+        if ref is None or frm is None:
+            return frm
+        hr, wr = ref.shape[:2]
+        h, w = frm.shape[:2]
+        return frm if (h, w) == (hr, wr) else cv.resize(frm, (wr, hr), interpolation=cv.INTER_AREA)
+
+    def _apply_preproc_view_into_frame(self, base_img: np.ndarray, tool) -> np.ndarray:
+        """
+        Vezme frame (už v rozmere referencie), vyreže ROI, spraví preproc podľa tool.params['preproc']
+        s rešpektovaním masiek (mask_rects), a vráti obrázok s vloženým preproc ROI späť do (x,y).
+        """
+        import numpy as np
+        import cv2 as cv
+
+        img = base_img.copy()
+        if tool is None or getattr(tool, "roi_xywh", None) is None:
+            return img
+
+        x, y, w, h = [int(v) for v in tool.roi_xywh]
+        H, W = img.shape[:2]
+        # clamp
+        x = max(0, min(x, max(0, W-1)))
+        y = max(0, min(y, max(0, H-1)))
+        w = max(0, min(w, W - x))
+        h = max(0, min(h, H - y))
+        if w <= 0 or h <= 0:
+            return img
+
+        params = getattr(tool, "params", {}) or {}
+        chain  = params.get("preproc", []) or []
+
+        # maska v ROI-lokálnych súradniciach (255 = analyzuj, 0 = ignoruj)
+        mask_rects = params.get("mask_rects", []) or []
+        m = None
+        if mask_rects:
+            m = np.full((h, w), 255, np.uint8)
+            for (rx, ry, rw, rh) in mask_rects:
+                fx = max(0, int(rx) - x)
+                fy = max(0, int(ry) - y)
+                fw = max(0, min(int(rw), w - fx))
+                fh = max(0, min(int(rh), h - fy))
+                if fw > 0 and fh > 0:
+                    m[fy:fy+fh, fx:fx+fw] = 0
+
+        roi = img[y:y+h, x:x+w]
+        was_bgr = (roi.ndim == 3)
+        roi_gray = roi if roi.ndim == 2 else cv.cvtColor(roi, cv.COLOR_BGR2GRAY)
+
+        if chain:
+            try:
+                roi_proc = tool._apply_preproc_chain(roi_gray, chain, mask=m)
+            except Exception:
+                roi_proc = roi_gray
+        else:
+            roi_proc = roi_gray
+
+        if was_bgr:
+            roi_proc = cv.cvtColor(roi_proc, cv.COLOR_GRAY2BGR)
+
+        img[y:y+h, x:x+w] = roi_proc
+        return img
+
+    def _render_out(self, frame_gray, out):
+        ok = out.get("ok", True)
+        self.lbl_verdict.setText("OK" if ok else "NOK")
+        self.lbl_verdict.setStyleSheet(
+            "QLabel{font-size:28px; padding:8px; border-radius:8px; background:%s; color:white;}" %
+            ("#2e7d32" if ok else "#c62828")
+        )
+        self.lbl_latency.setText(f"lat: {out.get('elapsed_ms',0.0):.1f} ms")
+        
+        
+        # udrž strip synchronizovaný s počtom nástrojov a základným obrázkom
+        tools = getattr(self.state.pipeline, "tools", []) or []
+        ref_for_strip = getattr(self.state, "ref_img", None)
+        if ref_for_strip is None:
+            ref_for_strip = self._last_frame
+        self.tool_strip.set_tools_if_needed(tools, ref_for_strip, self._last_frame)
+
+
     # ---------- Render ----------
     def _render_out(self, frame_gray, out):
         ok = out.get("ok", True)
@@ -177,10 +307,25 @@ class RunTab(QtWidgets.QWidget):
             ref_h, ref_w = self.state.ref_img.shape[:2]
         else:
             ref_h, ref_w = frame_gray.shape[:2]
-        comp = compose_overlay(frame_gray, (ref_h, ref_w), out, self._visible_tool_idx, view_mode=self._view_mode())
 
+        mode = self._view_mode()
+        img_to_show = frame_gray
 
+        # ak je vybraný náhľad "ROI po preproc", vyrob podklad s vloženým preproc ROI (ako v Builderi)
+        if mode == "roi_preproc":
+            img_to_show = self._match_ref_size(img_to_show)
+            tool = None
+            try:
+                tools = getattr(self.state.pipeline, "tools", []) or []
+                if tools and self._visible_tool_idx is not None and 0 <= self._visible_tool_idx < len(tools):
+                    tool = tools[self._visible_tool_idx]
+            except Exception:
+                tool = None
+            img_to_show = self._apply_preproc_view_into_frame(img_to_show, tool)
+
+        comp = compose_overlay(img_to_show, (ref_h, ref_w), out, self._visible_tool_idx, view_mode=mode)
         self.view.set_ndarray(comp)
+
 
         # zaktualizuj náhľady (OK/NOK pásik + tooltipy)
         self.tool_strip.update_status(out, getattr(self.state, "ref_img", None), self._last_frame)
@@ -201,6 +346,80 @@ class RunTab(QtWidgets.QWidget):
             # override jednotiek pre edge-trace, ak metrika je coverage_pct
             if details.get("metric") == "coverage_pct":
                 units = "%"
+
+
+
+
+            units_str = f" {units}" if units else ""
+            lines.append(f"{name} | hodnota={float(measured):.2f}{units_str}  LSL={lsl}  USL={usl}  -> {'OK' if ok_t else 'NOK'}")
+
+            # >>> NOVÉ: vypíš reťazec predspracovania, ak ho tool poslal
+            pre = details.get("preproc_desc")
+            if pre:
+                lines.append(f"   ↳ preproc: {pre}")
+
+            # Edge-trace: metrika a štatistiky
+            metric = details.get("metric")
+            if metric == "coverage_pct":
+                cov = details.get("coverage_pct", 0.0)
+                edges = details.get("edges_px", 0)
+                band = details.get("band_px", 0)
+                canny_lo = details.get("canny_lo", None)
+                canny_hi = details.get("canny_hi", None)
+                lines.append(f"   ↳ metric={metric} | coverage={cov:.1f}%  edges={edges}/{band}  canny={canny_lo}/{canny_hi}")
+            elif metric == "px_gap":
+                gap = details.get("gap_px", 0)
+                edges = details.get("edges_px", 0)
+                band = details.get("band_px", 0)
+                canny_lo = details.get("canny_lo", None)
+                canny_hi = details.get("canny_hi", None)
+                lines.append(f"   ↳ metric={metric} | gap_px={gap}  edges={edges}/{band}  canny={canny_lo}/{canny_hi}")
+
+            # diff_from_ref: ak tool poslal tieto polia, ukáž tuning parametre
+            if {"measure","thresh","morph_open","min_blob_area"} <= set(details.keys()):
+                measure_name = "Plocha vád (px²)" if details.get("measure") == "area" else "Počet vád"
+                lines.append(
+                    f"   ↳ measure={measure_name}  thresh={details.get('thresh')}  "
+                    f"morph={details.get('morph_open')}  min_blob={details.get('min_blob_area')}"
+                )
+
+
+        self.lbl_last.setPlainText("\n".join(lines))
+
+
+
+        rgb = cv.cvtColor(comp, cv.COLOR_BGR2RGB)
+        h, w = rgb.shape[:2]
+        qimg = QtGui.QImage(rgb.data, w, h, 3*w, QtGui.QImage.Format_RGB888)
+        self.film.add_pixmap(QtGui.QPixmap.fromImage(qimg))
+    
+    
+
+
+
+
+        # zaktualizuj náhľady (OK/NOK pásik + tooltipy)
+        self.tool_strip.update_status(out, getattr(self.state, "ref_img", None), self._last_frame)
+
+
+        lines = []
+        for r in out.get("results", []):
+            name     = getattr(r, "name", "nástroj")
+            measured = getattr(r, "measured", 0.0)
+            lsl      = getattr(r, "lsl", None)
+            usl      = getattr(r, "usl", None)
+            ok_t     = getattr(r, "ok", True)
+
+            # načítaj detaily skôr, aby sme vedeli prípadne prepnúť jednotky
+            details  = getattr(r, "details", {}) or {}
+            units    = getattr(r, "units", "")
+
+            # override jednotiek pre edge-trace, ak metrika je coverage_pct
+            if details.get("metric") == "coverage_pct":
+                units = "%"
+
+
+
 
             units_str = f" {units}" if units else ""
             lines.append(f"{name} | hodnota={float(measured):.2f}{units_str}  LSL={lsl}  USL={usl}  -> {'OK' if ok_t else 'NOK'}")
@@ -395,15 +614,21 @@ class RunTab(QtWidgets.QWidget):
     def _cycle_now(self):
         if self.state.pipeline is None or self.state.camera is None:
             return
+        # NOVÉ
         frm = self.state.get_frame(timeout_ms=150)
-        if frm is None: return
-        self._last_frame = frm.copy()
+        if frm is None: 
+            return
+        frm_proc = self._match_ref_size(frm)
+        self._last_frame = frm_proc.copy()
         self.live_panel.apply_to_tool(self._active_tool())
 
-
-        out = self.state.process(frm)
-        self._render_out(frm, out)
+        out = self.state.process(frm_proc)
+        self._render_out(frm_proc, out)
         self._last_out = out
+
+        self._render_out(frm_proc, out)
+        self._last_out = out
+
         if self.chk_plc.isChecked():
             self._last_out_from_plc = out
             self._freeze_plc_manual = True   # <<< ZAMRAZ PO MANUÁLNOM CYKLE V PLC
@@ -434,7 +659,8 @@ class RunTab(QtWidgets.QWidget):
             frm = self.state.get_frame(timeout_ms=50)
             if frm is None:
                 return
-            self._last_frame = frm.copy()
+            frm_proc = self._match_ref_size(frm)
+            self._last_frame = frm_proc.copy()
 
             self._ensure_plc()
             if not self.plc:
@@ -443,9 +669,8 @@ class RunTab(QtWidgets.QWidget):
             self._last_out_from_plc = None
 
             def do_cycle_capture():
-                # spracuj JEDEN cyklus len keď PLC to vyžiada
                 self.live_panel.apply_to_tool(self._active_tool())
-                out = self.state.process(frm)
+                out = self.state.process(frm_proc)
                 self._last_out_from_plc = out
                 return out
 
@@ -455,7 +680,7 @@ class RunTab(QtWidgets.QWidget):
             if self._last_out_from_plc is not None:
                 # Máme nové dáta z PLC cyklu → zruš freeze (ak by bol z predošlého cyklu)
                 self._freeze_plc_manual = False
-                self._render_out(frm, self._last_out_from_plc)
+                self._render_out(frm_proc, self._last_out_from_plc)
                 self._last_out = self._last_out_from_plc
                 try:
                     self.plc.mb.set_coil(20, 0)
@@ -464,14 +689,18 @@ class RunTab(QtWidgets.QWidget):
             return  # dôležité: nepadni do non-PLC vetvy
 
         # --- non-PLC režim (bežný streaming) ---
+        # NOVÉ
         frm = self.state.get_frame(timeout_ms=50)
-        if frm is None:
+        if frm is None: 
             return
-        self._last_frame = frm.copy()
+        frm_proc = self._match_ref_size(frm)
+        self._last_frame = frm_proc.copy()
         self.live_panel.apply_to_tool(self._active_tool())
-        out = self.state.process(frm)
-        self._render_out(frm, out)
+        out = self.state.process(frm_proc)
+        self._render_out(frm_proc, out)
         self._last_out = out
+
+
         # _render_out už robí tool_strip.update_status(...)
 
 

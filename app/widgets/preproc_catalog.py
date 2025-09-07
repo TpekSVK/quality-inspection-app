@@ -3,19 +3,51 @@ from typing import List, Dict, Any
 from PyQt5 import QtWidgets, QtCore
 
 DEFAULT_PREPROC = [
-    {"cat":"Šum", "title":"Median 3×3", "desc":"Zníži soľ-a-korenie šum bez rozpatlania hrán.",
-     "chain":[{"op":"median","k":3}]},
+    {"cat":"Žiadne", "title":"Bez predspracovania", "desc":"Vypnuté.", "chain":[]},
+
+    {"cat":"Osvetlenie", "title":"Homomorphic (σ=30, gain=1.2)", "desc":"Vyrovná nerovné osvetlenie (log - log blur).",
+     "chain":[{"op":"homo","sigma":30.0,"gain":1.2}]},
+    {"cat":"Osvetlenie", "title":"Retinex SSR (σ=25)", "desc":"Jednoduchý Retinex – detaily v tieni.",
+     "chain":[{"op":"retinex","sigma":25.0}]},
     {"cat":"Kontrast", "title":"CLAHE 2.0 (8×8)", "desc":"Lokálne vyrovnanie kontrastu – vytiahne jemné detaily.",
      "chain":[{"op":"clahe","clip":2.0,"tile":8}]},
+    {"cat":"Kontrast", "title":"Equalize Hist", "desc":"Klasická histogramová equalizácia (celý ROI).",
+     "chain":[{"op":"equalize"}]},
+
+    {"cat":"Hrany", "title":"Morph. gradient k=5", "desc":"Zvýrazní hrany (dilate − erode).",
+     "chain":[{"op":"morphgrad","k":5}]},
+    {"cat":"Hrany", "title":"LoG (k=7)", "desc":"Laplacian of Gaussian – čisté hrany.",
+     "chain":[{"op":"log","k":7}]},
+    {"cat":"Hrany", "title":"Unsharp 1.2 / r=3", "desc":"Doostrenie pred edge detekciou.",
+     "chain":[{"op":"unsharp","amount":1.2,"radius":3}]},
+
+    {"cat":"Šum", "title":"Median 3×3", "desc":"Odstráni soľ-a-korenie šum.",
+     "chain":[{"op":"median","k":3}]},
+    {"cat":"Šum", "title":"Guided r=7 eps=1e-3", "desc":"Hrany zachovávajúce vyhladenie (fallback na bilateral).",
+     "chain":[{"op":"guided","r":7,"eps":1e-3}]},
+    {"cat":"Šum", "title":"Fast NLM h=10", "desc":"Silný odšum (len menšie ROI).",
+     "chain":[{"op":"nlm","h":10.0}]},
+
     {"cat":"Pozadie", "title":"Top-hat 15", "desc":"Odstráni hladké pozadie, nechá malé svetlé vady.",
      "chain":[{"op":"tophat","k":15}]},
-    {"cat":"Hrany", "title":"Unsharp 1.0 / r=3", "desc":"Doostrenie hrán pred detekciou.",
-     "chain":[{"op":"unsharp","amount":1.0,"radius":3}]},
+    {"cat":"Pozadie", "title":"Rolling-ball r=25", "desc":"Otvorenie ako odhad pozadia, potom odčítané.",
+     "chain":[{"op":"rollball","r":25}]},
+
+    {"cat":"Prahovanie", "title":"Sauvola win=25, k=0.2", "desc":"Adaptívna binarizácia (textúra/OCR).",
+     "chain":[{"op":"sauvola","win":25,"k":0.2}]},
+
+    {"cat":"Textúra/Škrabance", "title":"Gabor bank (0,45,90,135; f=0.15)", "desc":"Zvýrazní ryhy v daných smeroch.",
+     "chain":[{"op":"gabor","angles":[0,45,90,135],"freq":0.15,"ksize":21,"sigma":4.0,"gamma":0.5}]},
+
+    {"cat":"Normalizácia", "title":"Z-score", "desc":"Zjednotí jas/kontrast naprieč dávkami.",
+     "chain":[{"op":"zscore"}]},
+    {"cat":"Normalizácia", "title":"Clip 5–95%", "desc":"Oreže outliery a rescalne rozsah.",
+     "chain":[{"op":"clip","lo":5.0,"hi":95.0}]},
+
     {"cat":"Kombinácia", "title":"Median + CLAHE", "desc":"Najprv odšum, potom lokálny kontrast.",
-     "chain":[{"op":"median","k":3},{"op":"clahe","clip":2.0,"tile":8}]},
-    {"cat":"Žiadne", "title":"Bez predspracovania", "desc":"Vypnuté.",
-     "chain":[]},
+     "chain":[{"op":"median","k":3},{"op":"clahe","clip":2.0,"tile":8}]}
 ]
+
 
 def _chain_to_text(chain: List[Dict[str,Any]]) -> str:
     if not chain:
@@ -33,25 +65,32 @@ class _OpEditor(QtWidgets.QGroupBox):
 
     def __init__(self, step: Dict[str,Any], parent=None):
         super().__init__(f"Op: {step.get('op','?')}", parent)
-
-        # držíme REFERENCIU na pôvodný krok v chain-e, nie kópiu
+        # DRŽÍME REFERENCIU (nie kópiu), nech sa zmeny prejavia v chain-e
         self.step = step
-
         form = QtWidgets.QFormLayout(self)
         self.widgets = {}
 
-        def add_spin(name, key, vmin, vmax, step=1, dec=False):
+        def add_spin(name, key, vmin, vmax, stepv=1, dec=False, val=None):
             if dec:
-                w = QtWidgets.QDoubleSpinBox(); w.setRange(vmin, vmax); w.setSingleStep(step)
-                w.setValue(float(self.step.get(key, 0.0)))
+                w = QtWidgets.QDoubleSpinBox(); w.setRange(vmin, vmax); w.setSingleStep(stepv)
+                w.setValue(float(self.step.get(key, val if val is not None else 0.0)))
             else:
-                w = QtWidgets.QSpinBox(); w.setRange(vmin, vmax); w.setSingleStep(step)
-                w.setValue(int(self.step.get(key, 0)))
+                w = QtWidgets.QSpinBox(); w.setRange(vmin, vmax); w.setSingleStep(stepv)
+                w.setValue(int(self.step.get(key, val if val is not None else 0)))
             w.valueChanged.connect(self._on_changed)
             self.widgets[key] = w
             form.addRow(name, w)
 
+        def add_line(name, key, placeholder=""):
+            w = QtWidgets.QLineEdit()
+            w.setText(str(self.step.get(key, "")))
+            w.setPlaceholderText(placeholder)
+            w.textChanged.connect(self._on_changed)
+            self.widgets[key] = w
+            form.addRow(name, w)
+
         op = str(self.step.get("op","")).lower()
+
         if op in ("median","gaussian"):
             add_spin("K (px, nepárne)", "k", 1, 99, 2, dec=False)
         elif op == "bilateral":
@@ -59,16 +98,40 @@ class _OpEditor(QtWidgets.QGroupBox):
             add_spin("sigmaColor", "sigmaColor", 1, 255, 1, dec=True)
             add_spin("sigmaSpace", "sigmaSpace", 1, 255, 1, dec=True)
         elif op == "clahe":
-            add_spin("clip", "clip", 0.1, 40.0, 0.1, dec=True)
-            add_spin("tile", "tile", 2, 64, 1, dec=False)
-        elif op in ("tophat","blackhat"):
-            add_spin("K (px, nepárne)", "k", 3, 99, 2, dec=False)
+            add_spin("clip", "clip", 0.1, 40.0, 0.1, dec=True, val=2.0)
+            add_spin("tile", "tile", 2, 64, 1, dec=False, val=8)
+        elif op in ("tophat","blackhat","morphgrad","log"):
+            add_spin("K (px, nepárne)", "k", 3, 99, 2, dec=False, val=15)
         elif op == "unsharp":
-            add_spin("amount", "amount", 0.0, 5.0, 0.1, dec=True)
-            add_spin("radius", "radius", 1, 51, 2, dec=False)
+            add_spin("amount", "amount", 0.0, 5.0, 0.1, dec=True, val=1.0)
+            add_spin("radius", "radius", 1, 51, 2, dec=False, val=3)
         elif op == "normalize":
-            add_spin("alpha", "alpha", 0.0, 255.0, 1.0, dec=True)
-            add_spin("beta",  "beta",  0.0, 255.0, 1.0, dec=True)
+            add_spin("alpha", "alpha", 0.0, 255.0, 1.0, dec=True, val=0.0)
+            add_spin("beta",  "beta",  0.0, 255.0, 1.0, dec=True, val=255.0)
+        elif op == "homo":
+            add_spin("sigma", "sigma", 1.0, 200.0, 1.0, dec=True, val=30.0)
+            add_spin("gain",  "gain",  0.1, 5.0,   0.1, dec=True, val=1.2)
+        elif op == "retinex":
+            add_spin("sigma", "sigma", 1.0, 200.0, 1.0, dec=True, val=25.0)
+        elif op == "guided":
+            add_spin("r (radius)", "r", 1, 64, 1, dec=False, val=7)
+            add_spin("eps", "eps", 1e-6, 1e-1, 1e-3, dec=True, val=1e-3)
+        elif op == "nlm":
+            add_spin("h", "h", 1.0, 30.0, 0.5, dec=True, val=10.0)
+        elif op == "rollball":
+            add_spin("r (px, nepárne)", "r", 3, 199, 2, dec=False, val=25)
+        elif op == "sauvola":
+            add_spin("win (px, nepárne)", "win", 3, 199, 2, dec=False, val=25)
+            add_spin("k", "k", 0.01, 0.5, 0.01, dec=True, val=0.2)
+        elif op == "clip":
+            add_spin("lo [%]", "lo", 0.0, 99.0, 1.0, dec=True, val=5.0)
+            add_spin("hi [%]", "hi", 1.0, 100.0, 1.0, dec=True, val=95.0)
+        elif op == "gabor":
+            add_line("angles (°)", "angles", "napr. 0,45,90,135")
+            add_spin("freq (cykly/px)", "freq", 0.01, 0.5, 0.01, dec=True, val=0.15)
+            add_spin("ksize", "ksize", 7, 101, 2, dec=False, val=21)
+            add_spin("sigma", "sigma", 0.5, 20.0, 0.5, dec=True, val=4.0)
+            add_spin("gamma", "gamma", 0.1, 2.0, 0.1, dec=True, val=0.5)
         else:
             lab = QtWidgets.QLabel("Tento op nemá editovateľné parametre.")
             form.addRow(lab)
@@ -76,8 +139,20 @@ class _OpEditor(QtWidgets.QGroupBox):
     def _on_changed(self, *_):
         # uloží hodnoty späť
         for k, w in self.widgets.items():
-            self.step[k] = float(w.value()) if isinstance(w, QtWidgets.QDoubleSpinBox) else int(w.value())
-        self.changed.emit()  # povieme dialógu „zmenilo sa“
+            if isinstance(w, QtWidgets.QDoubleSpinBox):
+                self.step[k] = float(w.value())
+            elif isinstance(w, QtWidgets.QSpinBox):
+                self.step[k] = int(w.value())
+            elif isinstance(w, QtWidgets.QLineEdit):
+                val = w.text().strip()
+                if k == "angles":
+                    try:
+                        self.step[k] = [int(s) for s in val.split(",") if s.strip()!=""]
+                    except Exception:
+                        self.step[k] = val
+                else:
+                    self.step[k] = val
+        self.changed.emit()
 
 
 class PreprocDialog(QtWidgets.QDialog):

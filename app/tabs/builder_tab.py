@@ -1327,37 +1327,139 @@ class BuilderTab(QtWidgets.QWidget):
         for st in (chain or []):
             try:
                 op = str(st.get("op","")).lower()
+
                 if op == "median":
                     k = int(st.get("k",3)); k = k if k%2==1 else k+1
                     tmp = cv.medianBlur(img, max(1,k)); img = blend(tmp)
+
                 elif op == "gaussian":
                     k = int(st.get("k",3)); k = k if k%2==1 else k+1
                     tmp = cv.GaussianBlur(img, (max(1,k),max(1,k)), 0); img = blend(tmp)
+
                 elif op == "bilateral":
                     d = int(st.get("d",5)); sc=float(st.get("sigmaColor",75.0)); ss=float(st.get("sigmaSpace",75.0))
                     tmp = cv.bilateralFilter(img, max(1,d), sc, ss); img = blend(tmp)
+
                 elif op == "clahe":
                     clip=float(st.get("clip",2.0)); tile=int(st.get("tile",8))
                     clahe = cv.createCLAHE(clipLimit=max(0.1,clip), tileGridSize=(max(1,tile),max(1,tile)))
                     tmp = clahe.apply(img); img = blend(tmp)
+
                 elif op == "tophat":
                     k = int(st.get("k",15)); k = k if k%2==1 else k+1
                     se = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k,k))
                     tmp = cv.morphologyEx(img, cv.MORPH_TOPHAT, se); img = blend(tmp)
+
                 elif op == "blackhat":
                     k = int(st.get("k",15)); k = k if k%2==1 else k+1
                     se = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k,k))
                     tmp = cv.morphologyEx(img, cv.MORPH_BLACKHAT, se); img = blend(tmp)
+
                 elif op == "unsharp":
                     amt=float(st.get("amount",1.0)); rad=int(st.get("radius",3)); rad = rad if rad%2==1 else rad+1
                     blur = cv.GaussianBlur(img, (max(1,rad),max(1,rad)), 0)
                     tmp = cv.addWeighted(img, 1.0+amt, blur, -amt, 0); img = blend(tmp)
+
                 elif op == "normalize":
                     a=float(st.get("alpha",0.0)); b=float(st.get("beta",255.0))
                     tmp = cv.normalize(img, None, alpha=a, beta=b, norm_type=cv.NORM_MINMAX); img = blend(tmp)
+
+                elif op == "morphgrad":
+                    k = int(st.get("k",5)); k = k if k%2==1 else k+1
+                    se = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k,k))
+                    dil = cv.dilate(img, se); ero = cv.erode(img, se)
+                    tmp = cv.subtract(dil, ero); img = blend(tmp)
+
+                elif op == "log":
+                    k = int(st.get("k",7)); k = k if k%2==1 else k+1
+                    blur = cv.GaussianBlur(img, (k,k), 0)
+                    lap  = cv.Laplacian(blur, cv.CV_16S, ksize=3)
+                    tmp  = cv.convertScaleAbs(lap); img = blend(tmp)
+
+                elif op == "homo":
+                    sigma=float(st.get("sigma",30.0)); gain=float(st.get("gain",1.0))
+                    f = img.astype(np.float32)+1.0
+                    L = cv.GaussianBlur(f, (0,0), sigmaX=max(0.1,sigma))
+                    res = (np.log(f) - np.log(L)) * gain
+                    tmp = cv.normalize(res, None, 0, 255, cv.NORM_MINMAX).astype(np.uint8)
+                    img = blend(tmp)
+
+                elif op == "retinex":
+                    sigma=float(st.get("sigma",25.0))
+                    f = img.astype(np.float32)+1.0
+                    L = cv.GaussianBlur(f, (0,0), sigmaX=max(0.1,sigma))
+                    res = np.log(f) - np.log(L)
+                    tmp = cv.normalize(res, None, 0, 255, cv.NORM_MINMAX).astype(np.uint8)
+                    img = blend(tmp)
+
+                elif op == "guided":
+                    r=int(st.get("r",7)); eps=float(st.get("eps",1e-3))
+                    try:
+                        gf = cv.ximgproc.guidedFilter(img, img, r, eps)
+                        tmp = np.clip(gf,0,255).astype(np.uint8)
+                    except Exception:
+                        tmp = cv.bilateralFilter(img, d=max(1,r*2+1), sigmaColor=40, sigmaSpace=40)
+                    img = blend(tmp)
+
+                elif op == "nlm":
+                    h=float(st.get("h",10.0))
+                    tmp = cv.fastNlMeansDenoising(img, None, h=h, templateWindowSize=7, searchWindowSize=21)
+                    img = blend(tmp)
+
+                elif op == "rollball":
+                    r=int(st.get("r",25)); r = r if r%2==1 else r+1
+                    se = cv.getStructuringElement(cv.MORPH_ELLIPSE, (r,r))
+                    bg = cv.morphologyEx(img, cv.MORPH_OPEN, se)
+                    tmp = cv.subtract(img, bg); img = blend(tmp)
+
+                elif op == "sauvola":
+                    win=int(st.get("win",25)); win = win if win%2==1 else win+1
+                    k=float(st.get("k",0.2))
+                    f = img.astype(np.float32)
+                    mean = cv.boxFilter(f, ddepth=-1, ksize=(win, win), normalize=True)
+                    mean2= cv.boxFilter(f*f, ddepth=-1, ksize=(win, win), normalize=True)
+                    var = np.clip(mean2 - mean*mean, 0, None)
+                    std = np.sqrt(var); R = 128.0
+                    th = mean * (1.0 + k*((std/R)-1.0))
+                    tmp = (f > th).astype(np.uint8)*255; img = blend(tmp)
+
+                elif op == "zscore":
+                    f = img.astype(np.float32)
+                    mu = float(f.mean()); sd = float(f.std()) if f.std()>1e-6 else 1.0
+                    z = (f - mu) / sd
+                    tmp = cv.normalize(z, None, 0,255, cv.NORM_MINMAX).astype(np.uint8); img = blend(tmp)
+
+                elif op == "clip":
+                    lo=float(st.get("lo",5.0)); hi=float(st.get("hi",95.0))
+                    lo=max(0.0,min(100.0,lo)); hi=max(lo+0.1,min(100.0,hi))
+                    p1,p2 = np.percentile(img,[lo,hi])
+                    if p2<=p1: p2=p1+1.0
+                    f = np.clip(img.astype(np.float32), p1, p2)
+                    tmp = ((f-p1)*(255.0/(p2-p1))).astype(np.uint8); img = blend(tmp)
+
+                elif op == "equalize":
+                    tmp = cv.equalizeHist(img); img = blend(tmp)
+
+                elif op == "gabor":
+                    angles = st.get("angles",[0,45,90,135]); freq=float(st.get("freq",0.15))
+                    lmbd = 1.0/max(1e-6,freq)
+                    ksize = int(st.get("ksize",21)); ksize = ksize if ksize%2==1 else ksize+1
+                    sigma = float(st.get("sigma", ksize/6.0)); gamma=float(st.get("gamma",0.5))
+                    acc=None
+                    for a in angles:
+                        try:
+                            theta=np.deg2rad(float(a))
+                            kern=cv.getGaborKernel((ksize,ksize), sigma, theta, lmbd, gamma, 0, ktype=cv.CV_32F)
+                            resp=cv.filter2D(img, cv.CV_32F, kern)
+                            acc = resp if acc is None else np.maximum(acc, resp)
+                        except Exception:
+                            continue
+                    if acc is not None:
+                        tmp = cv.normalize(acc,None,0,255,cv.NORM_MINMAX).astype(np.uint8); img = blend(tmp)
+
             except Exception:
                 continue
-        return img
+        return img        
 
     def _update_preview_image(self):
         """Prekreslí referenčnú fotku podľa comboboxu „Náhľad“ – bez zmeny súboru na disku."""
@@ -1375,8 +1477,31 @@ class BuilderTab(QtWidgets.QWidget):
             self.roi_view.set_ndarray(base)
             return
 
+        # --- NOVÝ BLOK (SAFE ROI + CLAMP) ---
         t = self.recipe["tools"][idx]
-        x,y,w,h = [int(v) for v in t.get("roi_xywh", [0,0,0,0])]
+
+        # Bezpečné načítanie ROI (ošetrenie None a zlých typov)
+        roi_vals = list(t.get("roi_xywh", [0, 0, 0, 0]))
+        while len(roi_vals) < 4:
+            roi_vals.append(0)
+
+        def as_int(v, default=0):
+            try:
+                return int(v)
+            except Exception:
+                return int(default)
+
+        x, y, w, h = (as_int(roi_vals[0]), as_int(roi_vals[1]),
+                    as_int(roi_vals[2]), as_int(roi_vals[3]))
+
+        # Orez do hraníc obrázka
+        H, W = base.shape[:2]
+        x = max(0, min(x, max(0, W-1)))
+        y = max(0, min(y, max(0, H-1)))
+        w = max(0, min(w, W - x))
+        h = max(0, min(h, H - y))
+
+        # Ak ROI nevalídna, len vykresli základ
         if w <= 0 or h <= 0:
             self.roi_view.set_ndarray(base)
             return
@@ -1384,22 +1509,29 @@ class BuilderTab(QtWidgets.QWidget):
         params = t.get("params", {}) or {}
         chain  = params.get("preproc", []) or []
 
-        # postav masku v rámci ROI (ignorované oblasti = 0)
+        # Maska vo vnútri ROI (ignorované = 0)
         mask_rects = params.get("mask_rects", []) or []
         m = None
         if mask_rects:
             m = np.full((h, w), 255, np.uint8)
-            for (mx,my,mw,mh) in mask_rects:
+            for rect in mask_rects:
+                try:
+                    mx,my,mw,mh = [as_int(v, 0) for v in (rect if isinstance(rect, (list, tuple)) else (0,0,0,0))]
+                except Exception:
+                    continue
                 rx = max(0, mx - x); ry = max(0, my - y)
                 rw = max(0, min(mw, w - rx)); rh = max(0, min(mh, h - ry))
-                if rw>0 and rh>0:
+                if rw > 0 and rh > 0:
                     m[ry:ry+rh, rx:rx+rw] = 0
 
         if mode == "roi_preproc" and chain:
             roi = base[y:y+h, x:x+w]
             roi_p = self._apply_preproc_chain_preview(roi, chain, mask=m)
-            base[y:y+h, x:x+w] = roi_p
+            # pre istotu ošetriť tvar
+            if isinstance(roi_p, np.ndarray) and roi_p.shape[:2] == (h, w):
+                base[y:y+h, x:x+w] = roi_p
             self.roi_view.set_ndarray(base)
         else:
-            # "standard", "roi_raw" aj "clean" – zobraz základ (overlaye rieši ROI Drawer)
+            # "standard", "roi_raw" aj "clean"
             self.roi_view.set_ndarray(base)
+

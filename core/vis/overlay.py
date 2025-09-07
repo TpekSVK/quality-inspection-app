@@ -6,7 +6,7 @@ def compose_overlay(frame_gray: np.ndarray, ref_shape: tuple, out: dict, only_id
     """
     Zloží zobrazovaný obrázok: základ = frame_gray (resamplovaný na ref_shape),
     do ktorého sa pre vybraný nástroj(y) (only_idx) mieša polo-transparentná overlay
-    v ROI + kreslia sa ROI rámiky (oranžová) a masky (fialová).
+    v ROI + kreslia sa ROI rámiky (modrá) a masky (fialová).
     """
     h_ref, w_ref = ref_shape
     base = frame_gray
@@ -75,7 +75,7 @@ def compose_overlay(frame_gray: np.ndarray, ref_shape: tuple, out: dict, only_id
             # miešanie
             canvas[y:y+Hh, x:x+W] = cv.addWeighted(canvas[y:y+Hh, x:x+W], 0.6, ov, 0.4, 0)
             # ROI rámik
-            cv.rectangle(canvas, (x,y), (x+W, y+Hh), (0, 180, 255), 2)
+            cv.rectangle(canvas, (x,y), (x+W, y+Hh), (255, 180, 0), 2)
             
             
             if view_mode == "inset_preproc":
