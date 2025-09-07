@@ -127,7 +127,7 @@ class BuilderTab(QtWidgets.QWidget):
     def _tool_allows_masks(self) -> bool:
         typ = (self._active_tool_type() or "").lower()
         # masky majú zmysel pre tieto typy nástrojov:
-        return typ in {"diff_from_ref", "presence_absence", "yolo_roi"}
+        return typ in {"diff_from_ref", "presence_absence", "yolo_roi", "blob_count"}
 
     def _update_mask_buttons(self):
         allow = self._tool_allows_masks()
@@ -243,7 +243,14 @@ class BuilderTab(QtWidgets.QWidget):
         mid.addLayout(row_view)
 
         mid.addWidget(self.btn_use_roi)
+        self.btn_roi_full = QtWidgets.QPushButton("ROI = celý obraz (reset)")
+        mid.addWidget(self.btn_roi_full)
 
+        row_roi = QtWidgets.QHBoxLayout()
+        row_roi.addWidget(self.btn_use_roi)
+        row_roi.addWidget(self.btn_roi_full)
+        row_roi.addStretch(1)
+        mid.addLayout(row_roi)
 
         mid.addWidget(QtWidgets.QLabel("Masky (ignorované oblasti):"))
         self.list_masks = QtWidgets.QListWidget()
@@ -322,14 +329,33 @@ class BuilderTab(QtWidgets.QWidget):
         g_y.addRow("IoU threshold:", self.dbl_iou)
         g_y.addRow("Max detections:", self.spin_max_det)
 
-        # 2b) Blob-count (počet objektov)
+        # 2b) Blob-count (počet objektov) – rozšírené
         self.grp_blob = QtWidgets.QWidget()
         g_blob = QtWidgets.QFormLayout(self.grp_blob)
+
         self.spin_min_area = QtWidgets.QSpinBox(); self.spin_min_area.setRange(0, 100000); self.spin_min_area.setValue(120)
         self.chk_invert = QtWidgets.QCheckBox("Invertovať po Otsu")
-        self.grp_blob.setToolTip("Počítanie objektov v ROI po binarizácii. Menšie bloby ako 'min. plocha' sa ignorujú.")
+
+        # NOVÉ: metrika a kontúry
+        self.cmb_blob_metric = QtWidgets.QComboBox()
+        self.cmb_blob_metric.addItems(["Počet kusov (ks)", "Súčet plôch (px²)"])
+        self.chk_blob_contours = QtWidgets.QCheckBox("Zobraziť kontúry v RUN")
+
+        # NOVÉ: rýchle presety svetlé/tmavé
+        row_presets = QtWidgets.QHBoxLayout()
+        self.btn_blob_light = QtWidgets.QPushButton("Preset: Svetlé objekty")
+        self.btn_blob_dark  = QtWidgets.QPushButton("Preset: Tmavé objekty")
+        row_presets.addWidget(self.btn_blob_light)
+        row_presets.addWidget(self.btn_blob_dark)
+        row_presets.addStretch(1)
+
+        self.grp_blob.setToolTip("Počítanie objektov v ROI po binarizácii. Menšie bloby ako 'min. plocha' sa ignorujú. Vyber metriky a zobraz kontúry podľa potreby.")
         g_blob.addRow("Min. plocha [px²]:", self.spin_min_area)
         g_blob.addRow("", self.chk_invert)
+        g_blob.addRow("Metrika:", self.cmb_blob_metric)
+        g_blob.addRow("", self.chk_blob_contours)
+        g_blob.addRow("Rýchle presety:", row_presets)
+
 
         # default: skryť všetky skupiny – do FormLayoutu ich pridávame nižšie v sekcii „Jednotné poradie“
         for grp in (self.grp_diff, self.grp_edge, self.grp_presence, self.grp_yolo, self.grp_blob):
@@ -422,6 +448,10 @@ class BuilderTab(QtWidgets.QWidget):
         self.btn_mode_line.toggled.connect(self._on_mode_line)
         self.btn_mode_circle.toggled.connect(self._on_mode_circle)
         self.btn_mode_poly.toggled.connect(self._on_mode_poly)
+        self.btn_blob_light.clicked.connect(lambda: (self.chk_invert.setChecked(False), self.help_box.setPlainText("Preset svetlé: invert=OFF (svetlé objekty na tmavšom pozadí).")))
+        self.btn_blob_dark.clicked.connect(lambda: (self.chk_invert.setChecked(True),  self.help_box.setPlainText("Preset tmavé: invert=ON (tmavé objekty na svetlejšom pozadí).")))
+
+        self.btn_roi_full.clicked.connect(self._roi_full_image)
 
         self.spin_width.valueChanged.connect(self._on_width_changed)
         self.roi_view.shapeChanged.connect(self._on_shape_changed)
@@ -659,6 +689,16 @@ class BuilderTab(QtWidgets.QWidget):
         # --- Blob-count ---
         self.spin_min_area.setValue(int(params.get("min_area", 120)))
         self.chk_invert.setChecked(bool(params.get("invert", False)))
+        self.chk_blob_contours.setChecked(bool(params.get("draw_contours", False)))
+        met = str(params.get("metric", "count")).lower()
+        self.cmb_blob_metric.setCurrentText("Počet kusov (ks)" if met == "count" else "Súčet plôch (px²)")
+        # jednotky podľa metriky
+        if met == "count":
+            if self.edit_units.text().strip() != "ks":
+                self.edit_units.setText("ks")
+        else:
+            if self.edit_units.text().strip() != "px²":
+                self.edit_units.setText("px²")
 
         # --- Zapni/Skry UI skupiny podľa typu ---
         self._update_ui_for_tool(typ)
@@ -999,8 +1039,13 @@ class BuilderTab(QtWidgets.QWidget):
             p["max_det"]    = int(self.spin_max_det.value())
 
         elif t.get("type") == "blob_count":
-            p["min_area"] = int(self.spin_min_area.value())
-            p["invert"]   = bool(self.chk_invert.isChecked())
+            p["min_area"]      = int(self.spin_min_area.value())
+            p["invert"]        = bool(self.chk_invert.isChecked())
+            p["draw_contours"] = bool(self.chk_blob_contours.isChecked())
+            met_txt = self.cmb_blob_metric.currentText().lower()
+            p["metric"] = "count" if "počet" in met_txt else "sum_area"
+            # nastav jednotky podľa metriky
+            t["units"] = "ks" if p["metric"] == "count" else "px²"
 
                     
         self._refresh_tool_list()
@@ -1531,20 +1576,26 @@ class BuilderTab(QtWidgets.QWidget):
         params = t.get("params", {}) or {}
         chain  = params.get("preproc", []) or []
 
-        # Maska vo vnútri ROI (ignorované = 0)
+
+        
+        # maska v ROI-lokálnych súradniciach (255 = analyzuj, 0 = ignoruj)
         mask_rects = params.get("mask_rects", []) or []
         m = None
         if mask_rects:
             m = np.full((h, w), 255, np.uint8)
-            for rect in mask_rects:
-                try:
-                    mx,my,mw,mh = [as_int(v, 0) for v in (rect if isinstance(rect, (list, tuple)) else (0,0,0,0))]
-                except Exception:
-                    continue
-                rx = max(0, mx - x); ry = max(0, my - y)
-                rw = max(0, min(mw, w - rx)); rh = max(0, min(mh, h - ry))
-                if rw > 0 and rh > 0:
-                    m[ry:ry+rh, rx:rx+rw] = 0
+            for (rx, ry, rw, rh) in mask_rects:
+                # robustná intersekcia masky s ROI
+                Lx = max(x, int(rx))
+                Ly = max(y, int(ry))
+                Rx = min(x + w, int(rx) + int(rw))
+                Ry = min(y + h, int(ry) + int(rh))
+                if Rx > Lx and Ry > Ly:
+                    fx = Lx - x
+                    fy = Ly - y
+                    fw = Rx - Lx
+                    fh = Ry - Ly
+                    m[fy:fy+fh, fx:fx+fw] = 0
+
 
         if mode == "roi_preproc" and chain:
             roi = base[y:y+h, x:x+w]
@@ -1556,4 +1607,13 @@ class BuilderTab(QtWidgets.QWidget):
         else:
             # "standard", "roi_raw" aj "clean"
             self.roi_view.set_ndarray(base)
+    def _roi_full_image(self):
+        """Nastaví ROI na celý referenčný obrázok (reset ROI)."""
+        if getattr(self, "ref_img", None) is None:
+            QtWidgets.QMessageBox.information(self, "ROI", "Najprv načítaj referenčný obrázok.")
+            return
+        H, W = self.ref_img.shape[:2]
+        self.roi_view.set_roi(0, 0, W, H)
+        self._update_preview_image()
+
 

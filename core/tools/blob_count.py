@@ -6,22 +6,23 @@ from .base_tool import BaseTool, ToolResult
 class BlobCountTool(BaseTool):
     """
     Počíta objekty (bloby) v ROI po predspracovaní.
-    - Rešpektuje masky (mask_rects) – ignorované oblasti dávame na 0.
-    - Binarizácia: Otsu (jednoduché a robustné).
-    - Parametre:
-        params = {
-            "preproc": [...],     # reťazec filtrov (ako pri ostatných nástrojoch)
-            "mask_rects": [...],  # ignorované obdĺžniky v globálnych (ref) súradniciach
-            "min_area": 120,      # min. plocha blobu [px]
-            "invert": False       # invertovať binárny obraz po Otsu
-        }
+
+    Params (t["params"]):
+      - preproc: [... reťazec filtrov ...]
+      - mask_rects: [[x,y,w,h], ...] ignorované oblasti (globálne ref súradnice)
+      - min_area: int  (px²) – min plocha blobu
+      - invert: bool  – invertovať po Otsu
+      - metric: "count" | "sum_area" – čo ide do 'measured' (default: "count")
+      - draw_contours: bool – ak True, vrátime kontúry v absolútnych súradniciach (pre RUN overlay)
+
     Výstup:
-      measured = count (ks), units="ks"
+      - measured: podľa metric (count alebo sum_area)
+      - details: pre RUN (preproc_desc, count, sum_area_px2, min_area, invert, binarize, metric, draw_contours, contours_abs)
     """
     TYPE = "blob_count"
 
     def run(self, img_ref, img_cur, fixture_transform=None) -> ToolResult:
-        # 1) dorovnaj current do súradníc referencie (aby ROI/masky sedeli 1:1)
+        # 1) dorovnaj current do ref (aby ROI/masky sedeli 1:1)
         if fixture_transform is not None:
             cur_aligned = cv.warpPerspective(img_cur, fixture_transform, (img_ref.shape[1], img_ref.shape[0]))
         elif img_cur.shape[:2] != img_ref.shape[:2]:
@@ -29,7 +30,7 @@ class BlobCountTool(BaseTool):
         else:
             cur_aligned = img_cur
 
-        # 2) bezpečné ROI (clamp)
+        # 2) bezpečné ROI
         x, y, w, h = [int(v) for v in self.roi_xywh]
         H, W = img_ref.shape[:2]
         x = max(0, min(x, W-1)); y = max(0, min(y, H-1))
@@ -37,26 +38,30 @@ class BlobCountTool(BaseTool):
         if w <= 0 or h <= 0:
             return ToolResult(
                 ok=True, measured=0.0, lsl=self.lsl, usl=self.usl,
-                details={"error":"empty_roi"}, overlay=None
+                details={"error": "empty_roi"}, overlay=None
             )
 
         roi = cur_aligned[y:y+h, x:x+w]
-        if roi.ndim == 3:
-            roi_gray = cv.cvtColor(roi, cv.COLOR_BGR2GRAY)
-        else:
-            roi_gray = roi
+        roi_gray = roi if roi.ndim == 2 else cv.cvtColor(roi, cv.COLOR_BGR2GRAY)
 
-        # 3) maska v ROI-lokálnych súradniciach
-        params = self.params or {}
+        # 3) maska do ROI-lokálnych súradníc
+        params = dict(self.params or {})
         mask_rects = params.get("mask_rects", []) or []
         m = None
         if mask_rects:
             m = np.full((h, w), 255, np.uint8)
             for (rx, ry, rw, rh) in mask_rects:
-                fx = max(0, int(rx) - x); fy = max(0, int(ry) - y)
-                fw = max(0, min(int(rw), w - fx)); fh = max(0, min(int(rh), h - fy))
-                if fw > 0 and fh > 0:
+                Lx = max(x, int(rx))
+                Ly = max(y, int(ry))
+                Rx = min(x + w, int(rx) + int(rw))
+                Ry = min(y + h, int(ry) + int(rh))
+                if Rx > Lx and Ry > Ly:
+                    fx = Lx - x
+                    fy = Ly - y
+                    fw = Rx - Lx
+                    fh = Ry - Ly
                     m[fy:fy+fh, fx:fx+fw] = 0
+
 
         # 4) predspracovanie
         chain = params.get("preproc", []) or []
@@ -74,21 +79,41 @@ class BlobCountTool(BaseTool):
         min_area = int(params.get("min_area", 120))
         keep = [c for c in cnts if cv.contourArea(c) >= min_area]
         count = len(keep)
+        sum_area = float(sum(cv.contourArea(c) for c in keep))
 
-        # 7) OK/NOK podľa limitov
+        # 7) metrika a OK/NOK
+        metric = str(params.get("metric", "count")).lower()
+        measured = float(count) if metric == "count" else float(sum_area)
+
         lsl, usl = self.lsl, self.usl
         ok = True
-        if lsl is not None and float(count) < lsl: ok = False
-        if usl is not None and float(count) > usl: ok = False
+        if lsl is not None and measured < float(lsl): ok = False
+        if usl is not None and measured > float(usl): ok = False
+
+        # 8) kontúry do absolútnych súradníc (kvôli kresleniu)
+        draw_contours = bool(params.get("draw_contours", False))
+        contours_abs = None
+        if draw_contours and keep:
+            contours_abs = []
+            for c in keep:
+                ca = c.copy()
+                ca[:,0,0] += x
+                ca[:,0,1] += y
+                contours_abs.append(ca)
 
         details = {
             "preproc_desc": self._preproc_desc(chain),
             "min_area": min_area,
             "invert": bool(params.get("invert", False)),
-            "binarize": "otsu"
+            "binarize": "otsu",
+            "count": int(count),
+            "sum_area_px2": float(sum_area),
+            "metric": metric,
+            "draw_contours": draw_contours,
+            "contours_abs": contours_abs
         }
 
         return ToolResult(
-            ok=ok, measured=float(count), lsl=lsl, usl=usl,
+            ok=ok, measured=measured, lsl=lsl, usl=usl,
             details=details, overlay=None
         )

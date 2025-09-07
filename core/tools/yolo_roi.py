@@ -149,12 +149,17 @@ class YOLOInROITool(BaseTool):
         if mask_rects:
             full_mask = np.full((h, w), 255, np.uint8)
             for (rx, ry, rw, rh) in mask_rects:
-                fx = max(0, int(rx) - x)
-                fy = max(0, int(ry) - y)
-                fw = max(0, min(int(rw), w - fx))
-                fh = max(0, min(int(rh), h - fy))
-                if fw > 0 and fh > 0:
+                Lx = max(x, int(rx))
+                Ly = max(y, int(ry))
+                Rx = min(x + w, int(rx) + int(rw))
+                Ry = min(y + h, int(ry) + int(rh))
+                if Rx > Lx and Ry > Ly:
+                    fx = Lx - x
+                    fy = Ly - y
+                    fw = Rx - Lx
+                    fh = Ry - Ly
                     full_mask[fy:fy+fh, fx:fx+fw] = 0
+
 
         # -------------------- PREPROC (len bezpečné op na Y-kanáli) --------------------
         pre_desc = "—"

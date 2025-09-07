@@ -139,54 +139,6 @@ class RunTab(QtWidgets.QWidget):
         layout.addLayout(top, 5)
         layout.addWidget(self.film, 1)
 
-    def _match_ref_size(self, frm: np.ndarray) -> np.ndarray:
-        ref = getattr(self.state, "ref_img", None)
-        if ref is None or frm is None:
-            return frm
-        hr, wr = ref.shape[:2]
-        h, w = frm.shape[:2]
-        return frm if (h, w) == (hr, wr) else cv.resize(frm, (wr, hr), interpolation=cv.INTER_AREA)
-
-    def _apply_preproc_view_into_frame(self, base_img: np.ndarray, tool) -> np.ndarray:
-        import numpy as np, cv2 as cv
-        img = base_img.copy()
-        if tool is None or getattr(tool, "roi_xywh", None) is None:
-            return img
-        x, y, w, h = [int(v) for v in tool.roi_xywh]
-        H, W = img.shape[:2]
-        x = max(0, min(x, W-1)); y = max(0, min(y, H-1))
-        w = max(0, min(w, W - x)); h = max(0, min(h, H - y))
-        if w <= 0 or h <= 0: return img
-
-        params = getattr(tool, "params", {}) or {}
-        chain  = params.get("preproc", []) or []
-
-        # maska v ROI (255=analyzuj, 0=ignoruj)
-        m = None
-        mrects = params.get("mask_rects", []) or []
-        if mrects:
-            m = np.full((h, w), 255, np.uint8)
-            for (rx, ry, rw, rh) in mrects:
-                fx = max(0, int(rx)-x); fy = max(0, int(ry)-y)
-                fw = max(0, min(int(rw), w - fx)); fh = max(0, min(int(rh), h - fy))
-                if fw>0 and fh>0: m[fy:fy+fh, fx:fx+fw] = 0
-
-        roi = img[y:y+h, x:x+w]
-        was_bgr = (roi.ndim == 3)
-        roi_gray = roi if roi.ndim == 2 else cv.cvtColor(roi, cv.COLOR_BGR2GRAY)
-        if chain:
-            try:
-                roi_proc = tool._apply_preproc_chain(roi_gray, chain, mask=m)
-            except Exception:
-                roi_proc = roi_gray
-        else:
-            roi_proc = roi_gray
-        if was_bgr: roi_proc = cv.cvtColor(roi_proc, cv.COLOR_GRAY2BGR)
-        img[y:y+h, x:x+w] = roi_proc
-        return img
-
-
-
     # ---------- PLC ----------
     def _ensure_plc(self):
         if self.plc is None:
@@ -241,12 +193,17 @@ class RunTab(QtWidgets.QWidget):
         if mask_rects:
             m = np.full((h, w), 255, np.uint8)
             for (rx, ry, rw, rh) in mask_rects:
-                fx = max(0, int(rx) - x)
-                fy = max(0, int(ry) - y)
-                fw = max(0, min(int(rw), w - fx))
-                fh = max(0, min(int(rh), h - fy))
-                if fw > 0 and fh > 0:
+                Lx = max(x, int(rx))
+                Ly = max(y, int(ry))
+                Rx = min(x + w, int(rx) + int(rw))
+                Ry = min(y + h, int(ry) + int(rh))
+                if Rx > Lx and Ry > Ly:
+                    fx = Lx - x
+                    fy = Ly - y
+                    fw = Rx - Lx
+                    fh = Ry - Ly
                     m[fy:fy+fh, fx:fx+fw] = 0
+
 
         roi = img[y:y+h, x:x+w]
         was_bgr = (roi.ndim == 3)
@@ -265,24 +222,6 @@ class RunTab(QtWidgets.QWidget):
 
         img[y:y+h, x:x+w] = roi_proc
         return img
-
-    def _render_out(self, frame_gray, out):
-        ok = out.get("ok", True)
-        self.lbl_verdict.setText("OK" if ok else "NOK")
-        self.lbl_verdict.setStyleSheet(
-            "QLabel{font-size:28px; padding:8px; border-radius:8px; background:%s; color:white;}" %
-            ("#2e7d32" if ok else "#c62828")
-        )
-        self.lbl_latency.setText(f"lat: {out.get('elapsed_ms',0.0):.1f} ms")
-        
-        
-        # udrž strip synchronizovaný s počtom nástrojov a základným obrázkom
-        tools = getattr(self.state.pipeline, "tools", []) or []
-        ref_for_strip = getattr(self.state, "ref_img", None)
-        if ref_for_strip is None:
-            ref_for_strip = self._last_frame
-        self.tool_strip.set_tools_if_needed(tools, ref_for_strip, self._last_frame)
-
 
     # ---------- Render ----------
     def _render_out(self, frame_gray, out):
@@ -324,7 +263,25 @@ class RunTab(QtWidgets.QWidget):
             img_to_show = self._apply_preproc_view_into_frame(img_to_show, tool)
 
         comp = compose_overlay(img_to_show, (ref_h, ref_w), out, self._visible_tool_idx, view_mode=mode)
+
+
+        # --- Blob-count: kontúry (ak tool poslal a sú zapnuté) ---
+        try:
+            vis_idx = self._visible_tool_idx
+            if vis_idx is not None and 0 <= vis_idx < len(out.get("results", [])):
+                r = out["results"][vis_idx]
+                details = getattr(r, "details", {}) or {}
+                if details.get("draw_contours", False) and details.get("contours_abs"):
+                    for c in details["contours_abs"]:
+                        try:
+                            cv.drawContours(comp, [np.asarray(c, dtype=np.int32)], -1, (0, 220, 0), 2, lineType=cv.LINE_AA)
+                        except Exception:
+                            continue
+        except Exception:
+            pass
+
         self.view.set_ndarray(comp)
+
 
 
         # zaktualizuj náhľady (OK/NOK pásik + tooltipy)
@@ -453,6 +410,18 @@ class RunTab(QtWidgets.QWidget):
                     f"   ↳ measure={measure_name}  thresh={details.get('thresh')}  "
                     f"morph={details.get('morph_open')}  min_blob={details.get('min_blob_area')}"
                 )
+            
+            # Blob-count: vypíš count/sum_area ak sú v details
+            if "count" in details or "sum_area_px2" in details:
+                cnt = details.get("count", None)
+                sarea = details.get("sum_area_px2", None)
+                metric = details.get("metric", "")
+                info = []
+                if cnt is not None: info.append(f"count={int(cnt)} ks")
+                if sarea is not None: info.append(f"sum_area={float(sarea):.1f} px²")
+                if info:
+                    lines.append("   ↳ blob: " + "  |  ".join(info) + (f"   (metric={metric})" if metric else ""))
+
 
 
         self.lbl_last.setPlainText("\n".join(lines))
