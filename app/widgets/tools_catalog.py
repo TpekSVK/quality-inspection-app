@@ -398,12 +398,13 @@ class ToolCatalogDialog(QtWidgets.QDialog):
             {
                 "id":"blob_count",
                 "title":"Počítanie kusov (bloby)",
-                "type":"_wip_blob_count",
-                "params":{},
+                "type":"blob_count",
+                "params":{"mask_rects":[], "min_area":120, "invert":False, "preproc":[]},
                 "units":"ks",
-                "desc":"Spočíta objekty v ROI po prahovaní. Čoskoro.",
-                "enabled": False
+                "desc":"Spočíta objekty v ROI po binarizácii (Otsu) a filtrovaní podľa plochy. Rešpektuje masky a predspracovanie.",
+                "enabled": True
             },
+
         ]
 
         texture_tools = [

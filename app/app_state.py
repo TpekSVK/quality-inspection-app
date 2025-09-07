@@ -13,7 +13,7 @@ from core.tools.diff_from_ref import DiffFromRefTool
 from core.tools.presence_absence import PresenceAbsenceTool
 from core.tools.yolo_roi import YOLOInROITool
 from core.tools.edge_trace import EdgeTraceLineTool, EdgeTraceCircleTool, EdgeTraceCurveTool
-
+from core.tools.blob_count import BlobCountTool
 
 from interfaces.camera import ICamera
 
@@ -69,52 +69,71 @@ class AppState:
         tpl = ref[y:y+h, x:x+w].copy()
         fixture = TemplateFixture(tpl, min_score=float(fx.get("min_score",0.6)))
 
-        tools_conf = recipe.get("tools", [])
+        tools_conf = recipe.get("tools", []) or []
         tools = []
         for t in tools_conf:
-            typ = t.get("type","")
+            typ = (t.get("type", "") or "").lower()
+
             if typ == "diff_from_ref":
                 tools.append(DiffFromRefTool(
-                    name=t.get("name","diff"),
-                    roi_xywh=tuple(t.get("roi_xywh",[0,0,ref.shape[1]//2, ref.shape[0]//2])),
-                    params=t.get("params",{}),
-                    lsl=t.get("lsl",None), usl=t.get("usl",None), units=t.get("units","px")
+                    name=t.get("name", "diff"),
+                    roi_xywh=tuple(t.get("roi_xywh", [0, 0, ref.shape[1]//2, ref.shape[0]//2])),
+                    params=t.get("params", {}),
+                    lsl=t.get("lsl", None), usl=t.get("usl", None), units=t.get("units", "px")
                 ))
+
             elif typ == "presence_absence":
                 tools.append(PresenceAbsenceTool(
-                    name=t.get("name","presence"),
-                    roi_xywh=tuple(t.get("roi_xywh",[ref.shape[1]//2,0,ref.shape[1]//2, ref.shape[0]//2])),
-                    params=t.get("params",{"minScore":0.7}),
-                    lsl=t.get("lsl",None), usl=t.get("usl",None), units=t.get("units","score")
+                    name=t.get("name", "presence"),
+                    roi_xywh=tuple(t.get("roi_xywh", [ref.shape[1]//2, 0, ref.shape[1]//2, ref.shape[0]//2])),
+                    params=t.get("params", {"minScore": 0.7}),
+                    lsl=t.get("lsl", None), usl=t.get("usl", None), units=t.get("units", "score")
                 ))
+
             elif typ == "yolo_roi":
                 tools.append(YOLOInROITool(
-                    name=t.get("name","yolo"),
-                    roi_xywh=tuple(t.get("roi_xywh",[ref.shape[1]//2,0,ref.shape[1]//2, ref.shape[0]//2])),
-                    params=t.get("params",{}),
-                    lsl=t.get("lsl",None), usl=t.get("usl",None), units=t.get("units","count")
+                    name=t.get("name", "yolo"),
+                    roi_xywh=tuple(t.get("roi_xywh", [ref.shape[1]//2, 0, ref.shape[1]//2, ref.shape[0]//2])),
+                    params=t.get("params", {}),
+                    lsl=t.get("lsl", None), usl=t.get("usl", None), units=t.get("units", "count")
                 ))
+
             elif typ == "_wip_edge_line":
                 tools.append(EdgeTraceLineTool(
-                    name=t.get("name","Edge line"),
-                    roi_xywh=tuple(t.get("roi_xywh",[0,0,200,200])),
-                    params=t.get("params",{}),
-                    lsl=t.get("lsl",None), usl=t.get("usl",None), units=t.get("units","px")
+                    name=t.get("name", "Edge line"),
+                    roi_xywh=tuple(t.get("roi_xywh", [0, 0, 200, 200])),
+                    params=t.get("params", {}),
+                    lsl=t.get("lsl", None), usl=t.get("usl", None), units=t.get("units", "px")
                 ))
+
             elif typ == "_wip_edge_circle":
                 tools.append(EdgeTraceCircleTool(
-                    name=t.get("name","Edge circle"),
-                    roi_xywh=tuple(t.get("roi_xywh",[0,0,200,200])),
-                    params=t.get("params",{}),
-                    lsl=t.get("lsl",None), usl=t.get("usl",None), units=t.get("units","px")
+                    name=t.get("name", "Edge circle"),
+                    roi_xywh=tuple(t.get("roi_xywh", [0, 0, 200, 200])),
+                    params=t.get("params", {}),
+                    lsl=t.get("lsl", None), usl=t.get("usl", None), units=t.get("units", "px")
                 ))
+
             elif typ == "_wip_edge_curve":
                 tools.append(EdgeTraceCurveTool(
-                    name=t.get("name","Edge curve"),
-                    roi_xywh=tuple(t.get("roi_xywh",[0,0,200,200])),
-                    params=t.get("params",{}),
-                    lsl=t.get("lsl",None), usl=t.get("usl",None), units=t.get("units","px")
+                    name=t.get("name", "Edge curve"),
+                    roi_xywh=tuple(t.get("roi_xywh", [0, 0, 200, 200])),
+                    params=t.get("params", {}),
+                    lsl=t.get("lsl", None), usl=t.get("usl", None), units=t.get("units", "px")
                 ))
+
+            elif typ == "blob_count":
+                tools.append(BlobCountTool(
+                    name=t.get("name", "Blob count"),
+                    roi_xywh=tuple(t.get("roi_xywh", [0, 0, ref.shape[1]//2, ref.shape[0]//2])),
+                    params=t.get("params", {"min_area": 120, "invert": False, "preproc": [], "mask_rects": []}),
+                    lsl=t.get("lsl", None), usl=t.get("usl", None), units=t.get("units", "ks")
+                ))
+
+            else:
+                # neznámy typ – preskoč (môžeme zalogovať ak chceš)
+                pass
+
 
         self.pipeline = Pipeline(tools, fixture=fixture, pxmm=recipe.get("pxmm"))
         self.current_recipe = recipe_name

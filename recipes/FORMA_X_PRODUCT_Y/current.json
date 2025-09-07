@@ -83,6 +83,25 @@
       "lsl": null,
       "usl": 200.0,
       "units": "px"
+    },
+    {
+      "type": "blob_count",
+      "name": "Počítanie kusov (bloby)",
+      "roi_xywh": [
+        82,
+        22,
+        338,
+        334
+      ],
+      "params": {
+        "invert": false,
+        "mask_rects": [],
+        "min_area": 120,
+        "preproc": []
+      },
+      "lsl": null,
+      "usl": 200.0,
+      "units": "ks"
     }
   ],
   "models": {},

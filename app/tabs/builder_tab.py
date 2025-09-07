@@ -322,8 +322,17 @@ class BuilderTab(QtWidgets.QWidget):
         g_y.addRow("IoU threshold:", self.dbl_iou)
         g_y.addRow("Max detections:", self.spin_max_det)
 
+        # 2b) Blob-count (počet objektov)
+        self.grp_blob = QtWidgets.QWidget()
+        g_blob = QtWidgets.QFormLayout(self.grp_blob)
+        self.spin_min_area = QtWidgets.QSpinBox(); self.spin_min_area.setRange(0, 100000); self.spin_min_area.setValue(120)
+        self.chk_invert = QtWidgets.QCheckBox("Invertovať po Otsu")
+        self.grp_blob.setToolTip("Počítanie objektov v ROI po binarizácii. Menšie bloby ako 'min. plocha' sa ignorujú.")
+        g_blob.addRow("Min. plocha [px²]:", self.spin_min_area)
+        g_blob.addRow("", self.chk_invert)
+
         # default: skryť všetky skupiny – do FormLayoutu ich pridávame nižšie v sekcii „Jednotné poradie“
-        for grp in (self.grp_diff, self.grp_edge, self.grp_presence, self.grp_yolo):
+        for grp in (self.grp_diff, self.grp_edge, self.grp_presence, self.grp_yolo, self.grp_blob):
             grp.hide()
 
 
@@ -366,6 +375,8 @@ class BuilderTab(QtWidgets.QWidget):
         right.addRow(self.grp_edge)
         right.addRow(self.grp_presence)
         right.addRow(self.grp_yolo)
+        right.addRow(self.grp_blob)
+
 
         right.addRow(QtWidgets.QLabel("<hr>"))
 
@@ -645,6 +656,10 @@ class BuilderTab(QtWidgets.QWidget):
         self.dbl_iou.setValue(float(params.get("iou_thres", 0.45)))
         self.spin_max_det.setValue(int(params.get("max_det", 100)))
 
+        # --- Blob-count ---
+        self.spin_min_area.setValue(int(params.get("min_area", 120)))
+        self.chk_invert.setChecked(bool(params.get("invert", False)))
+
         # --- Zapni/Skry UI skupiny podľa typu ---
         self._update_ui_for_tool(typ)
 
@@ -704,7 +719,7 @@ class BuilderTab(QtWidgets.QWidget):
         return (typ or "").lower() in {"_wip_edge_line", "_wip_edge_circle", "_wip_edge_curve"}
 
     def _supports_masks(self, typ: str) -> bool:
-        return (typ or "").lower() in {"diff_from_ref", "presence_absence", "yolo_roi"}
+        return (typ or "").lower() in {"diff_from_ref", "presence_absence", "yolo_roi", "blob_count"}
 
     def _supports_diff(self, typ: str) -> bool:
         return (typ or "").lower() == "diff_from_ref"
@@ -722,6 +737,7 @@ class BuilderTab(QtWidgets.QWidget):
         is_diff = self._supports_diff(typ)
         is_pa   = self._supports_presence(typ)
         is_yolo = self._supports_yolo(typ)
+        is_blob = (typ or "").lower() == "blob_count"
 
         # shape ovládanie (štetce + šírka profilu)
         self.btn_mode_line.setVisible(shape)
@@ -744,6 +760,7 @@ class BuilderTab(QtWidgets.QWidget):
         self.grp_edge.setVisible(shape)
         self.grp_presence.setVisible(is_pa)
         self.grp_yolo.setVisible(is_yolo)
+        self.grp_blob.setVisible(is_blob)
 
         # ROI a „Použiť zmeny“ nech sú stále viditeľné
         self.btn_mode_roi.setVisible(True)
@@ -980,6 +997,11 @@ class BuilderTab(QtWidgets.QWidget):
             p["conf_thres"] = float(self.dbl_conf.value())
             p["iou_thres"]  = float(self.dbl_iou.value())
             p["max_det"]    = int(self.spin_max_det.value())
+
+        elif t.get("type") == "blob_count":
+            p["min_area"] = int(self.spin_min_area.value())
+            p["invert"]   = bool(self.chk_invert.isChecked())
+
                     
         self._refresh_tool_list()
         
