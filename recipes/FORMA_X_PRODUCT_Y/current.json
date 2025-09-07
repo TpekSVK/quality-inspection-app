@@ -17,49 +17,12 @@
   "tools": [
     {
       "type": "_wip_edge_line",
-      "name": "1",
+      "name": "Vada na priamke",
       "roi_xywh": [
-        265,
-        226,
-        273,
-        118
-      ],
-      "params": {
-        "canny_hi": 80,
-        "canny_lo": 20,
-        "metric": "coverage_pct",
-        "pts": [
-          [
-            318,
-            289
-          ],
-          [
-            481,
-            312
-          ]
-        ],
-        "shape": "line",
-        "width": 5,
-        "mask_rects": [],
-        "preproc": [
-          {
-            "k": 7,
-            "op": "median"
-          }
-        ]
-      },
-      "lsl": null,
-      "usl": 200.0,
-      "units": "%"
-    },
-    {
-      "type": "_wip_edge_line",
-      "name": "3",
-      "roi_xywh": [
-        284,
-        192,
-        264,
-        160
+        228,
+        104,
+        202,
+        208
       ],
       "params": {
         "canny_hi": 120,
@@ -67,17 +30,28 @@
         "metric": "px_gap",
         "pts": [
           [
-            320,
-            288
+            321,
+            108
           ],
           [
-            482,
-            309
+            310,
+            304
           ]
         ],
         "shape": "line",
         "width": 3,
-        "mask_rects": []
+        "mask_rects": [],
+        "preproc": [
+          {
+            "k": 30,
+            "op": "median"
+          },
+          {
+            "clip": 3.0,
+            "op": "clahe",
+            "tile": 4
+          }
+        ]
       },
       "lsl": null,
       "usl": 200.0,

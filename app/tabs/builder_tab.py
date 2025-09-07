@@ -233,7 +233,17 @@ class BuilderTab(QtWidgets.QWidget):
         self.btn_use_roi = QtWidgets.QPushButton("Použiť aktuálne nakreslené ROI")
         mid.addWidget(self.roi_view, 1)
         mid.addLayout(mode_bar)
+
+        # --- Náhľad zobrazenia (ako v RUN) ---
+        row_view = QtWidgets.QHBoxLayout()
+        row_view.addWidget(QtWidgets.QLabel("Náhľad:"))
+        self.cmb_view = QtWidgets.QComboBox()
+        self.cmb_view.addItems(["Štandard", "ROI po preproc", "ROI bez preproc", "Čistý obraz"])
+        row_view.addWidget(self.cmb_view, 1)
+        mid.addLayout(row_view)
+
         mid.addWidget(self.btn_use_roi)
+
 
         mid.addWidget(QtWidgets.QLabel("Masky (ignorované oblasti):"))
         self.list_masks = QtWidgets.QListWidget()
@@ -417,6 +427,9 @@ class BuilderTab(QtWidgets.QWidget):
         self.btn_apply.clicked.connect(self.apply_changes)
         self.btn_autoteach.clicked.connect(self.run_autoteach_ok_only)
         self.btn_autoteach_both.clicked.connect(self.run_autoteach_ok_nok)  # NOVÝ handler
+        self.cmb_view.currentIndexChanged.connect(self._update_preview_image)
+        self.roi_view.roiChanged.connect(lambda *_: self._update_preview_image())
+        self.roi_view.masksChanged.connect(self._update_preview_image)
 
         # Kontextová nápoveda – sleduj focus
         for w in (self.spin_thresh, self.spin_morph, self.spin_blob, self.cmb_measure,
@@ -512,7 +525,7 @@ class BuilderTab(QtWidgets.QWidget):
         if ref_path and Path(ref_path).exists():
             img = cv.imread(ref_path, cv.IMREAD_GRAYSCALE)
             self.ref_img = img
-            self.roi_view.set_ndarray(img)
+            self._update_preview_image()
         else:
             self.ref_img = None
             self.roi_view.setText("— (referencia nie je nastavená)")
@@ -540,6 +553,8 @@ class BuilderTab(QtWidgets.QWidget):
         if row < 0:
             self._clear_form()
             self._update_mask_buttons()
+            self._update_preview_image()
+
             return
 
         t = self.recipe.get("tools", [])[row]
@@ -557,6 +572,7 @@ class BuilderTab(QtWidgets.QWidget):
         self.lbl_type.setText(sk_typ)
         self.edit_name.setText(t.get("name","Kontrola A"))
         self._update_ui_for_tool(typ)
+        self._update_preview_image()
 
         x,y,w,h = t.get("roi_xywh",[0,0,200,200])
         self.roi_view.set_roi(x,y,w,h)
@@ -1288,3 +1304,102 @@ class BuilderTab(QtWidgets.QWidget):
         params["preproc"] = chain
         self.lbl_preproc.setText(self._preproc_summary(chain))
         QtWidgets.QMessageBox.information(self, "Predspracovanie", "Predspracovanie bolo nastavené pre tento nástroj. Nezabudni „Použiť zmeny…“ a potom „Uložiť verziu“.")
+    
+    def _view_mode(self) -> str:
+        t = getattr(self, "cmb_view", None)
+        if not t: return "standard"
+        txt = (self.cmb_view.currentText() or "").lower()
+        if "čistý" in txt: return "clean"
+        if "bez preproc" in txt: return "roi_raw"
+        if "po preproc" in txt: return "roi_preproc"
+        return "standard"
+
+    def _apply_preproc_chain_preview(self, gray_roi: np.ndarray, chain: list, mask: np.ndarray=None) -> np.ndarray:
+        """Mini verzia chain-u len na NÁHĽAD v Builderi (aplikuje sa v ROI, s maskou)."""
+        img = gray_roi.copy()
+        m = None
+        if mask is not None:
+            m = mask.copy() if mask.ndim == 2 else cv.cvtColor(mask, cv.COLOR_BGR2GRAY)
+            _, m = cv.threshold(m, 1, 255, cv.THRESH_BINARY)
+        def blend(tmp):
+            if m is None: return tmp
+            return np.where(m > 0, tmp, img)
+        for st in (chain or []):
+            try:
+                op = str(st.get("op","")).lower()
+                if op == "median":
+                    k = int(st.get("k",3)); k = k if k%2==1 else k+1
+                    tmp = cv.medianBlur(img, max(1,k)); img = blend(tmp)
+                elif op == "gaussian":
+                    k = int(st.get("k",3)); k = k if k%2==1 else k+1
+                    tmp = cv.GaussianBlur(img, (max(1,k),max(1,k)), 0); img = blend(tmp)
+                elif op == "bilateral":
+                    d = int(st.get("d",5)); sc=float(st.get("sigmaColor",75.0)); ss=float(st.get("sigmaSpace",75.0))
+                    tmp = cv.bilateralFilter(img, max(1,d), sc, ss); img = blend(tmp)
+                elif op == "clahe":
+                    clip=float(st.get("clip",2.0)); tile=int(st.get("tile",8))
+                    clahe = cv.createCLAHE(clipLimit=max(0.1,clip), tileGridSize=(max(1,tile),max(1,tile)))
+                    tmp = clahe.apply(img); img = blend(tmp)
+                elif op == "tophat":
+                    k = int(st.get("k",15)); k = k if k%2==1 else k+1
+                    se = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k,k))
+                    tmp = cv.morphologyEx(img, cv.MORPH_TOPHAT, se); img = blend(tmp)
+                elif op == "blackhat":
+                    k = int(st.get("k",15)); k = k if k%2==1 else k+1
+                    se = cv.getStructuringElement(cv.MORPH_ELLIPSE, (k,k))
+                    tmp = cv.morphologyEx(img, cv.MORPH_BLACKHAT, se); img = blend(tmp)
+                elif op == "unsharp":
+                    amt=float(st.get("amount",1.0)); rad=int(st.get("radius",3)); rad = rad if rad%2==1 else rad+1
+                    blur = cv.GaussianBlur(img, (max(1,rad),max(1,rad)), 0)
+                    tmp = cv.addWeighted(img, 1.0+amt, blur, -amt, 0); img = blend(tmp)
+                elif op == "normalize":
+                    a=float(st.get("alpha",0.0)); b=float(st.get("beta",255.0))
+                    tmp = cv.normalize(img, None, alpha=a, beta=b, norm_type=cv.NORM_MINMAX); img = blend(tmp)
+            except Exception:
+                continue
+        return img
+
+    def _update_preview_image(self):
+        """Prekreslí referenčnú fotku podľa comboboxu „Náhľad“ – bez zmeny súboru na disku."""
+        if getattr(self, "ref_img", None) is None:
+            return
+        base = self.ref_img.copy()
+        mode = self._view_mode()
+
+        # vypni/zapni overlay (ROI/masky/shape) v kresliacom widgete
+        self.roi_view.set_show_overlays(mode != "clean")
+
+        # ak nie je vybraný nástroj, len zobraz základ
+        idx = self.current_tool_idx if self.current_tool_idx is not None else -1
+        if idx < 0 or idx >= len(self.recipe.get("tools", [])):
+            self.roi_view.set_ndarray(base)
+            return
+
+        t = self.recipe["tools"][idx]
+        x,y,w,h = [int(v) for v in t.get("roi_xywh", [0,0,0,0])]
+        if w <= 0 or h <= 0:
+            self.roi_view.set_ndarray(base)
+            return
+
+        params = t.get("params", {}) or {}
+        chain  = params.get("preproc", []) or []
+
+        # postav masku v rámci ROI (ignorované oblasti = 0)
+        mask_rects = params.get("mask_rects", []) or []
+        m = None
+        if mask_rects:
+            m = np.full((h, w), 255, np.uint8)
+            for (mx,my,mw,mh) in mask_rects:
+                rx = max(0, mx - x); ry = max(0, my - y)
+                rw = max(0, min(mw, w - rx)); rh = max(0, min(mh, h - ry))
+                if rw>0 and rh>0:
+                    m[ry:ry+rh, rx:rx+rw] = 0
+
+        if mode == "roi_preproc" and chain:
+            roi = base[y:y+h, x:x+w]
+            roi_p = self._apply_preproc_chain_preview(roi, chain, mask=m)
+            base[y:y+h, x:x+w] = roi_p
+            self.roi_view.set_ndarray(base)
+        else:
+            # "standard", "roi_raw" aj "clean" – zobraz základ (overlaye rieši ROI Drawer)
+            self.roi_view.set_ndarray(base)

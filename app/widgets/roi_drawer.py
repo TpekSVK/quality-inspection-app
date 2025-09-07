@@ -22,6 +22,8 @@ class ROIDrawer(QtWidgets.QLabel):
         super().__init__(parent)
         self.setAlignment(QtCore.Qt.AlignCenter)
         self.setMinimumSize(480, 360)
+        self._show_overlays = True  # <<< NOVÉ: ovládanie viditeľnosti ROI/masky
+
         self.setStyleSheet("QLabel{background:#111; color:#bbb;}")
 
         self._img = None
@@ -109,6 +111,11 @@ class ROIDrawer(QtWidgets.QLabel):
         self.masksChanged.emit()
         self.update()
 
+    def set_show_overlays(self, show: bool):
+        self._show_overlays = bool(show)
+        self.update()
+
+
     def masks(self):
         return list(self._masks)
 
@@ -176,78 +183,77 @@ class ROIDrawer(QtWidgets.QLabel):
             ry = int(self._offy + y*self._scale)
             return rx, ry
 
-        # --- Masky (fialové) ---
-        p.setPen(QtGui.QPen(COLOR_MASK, 2, QtCore.Qt.SolidLine))
-        for (x,y,w,h) in self._masks:
-            rx, ry = iw(x,y)
-            rw = int(w*self._scale); rh = int(h*self._scale)
-            p.drawRect(rx, ry, rw, rh)
+        if self._show_overlays:
+            # --- Masky (fialové) ---
+            p.setPen(QtGui.QPen(COLOR_MASK, 2, QtCore.Qt.SolidLine))
+            for (x,y,w,h) in self._masks:
+                rx, ry = iw(x,y)
+                rw = int(w*self._scale); rh = int(h*self._scale)
+                p.drawRect(rx, ry, rw, rh)
 
-        # --- ROI (modrý obdĺžnik) ---
-        if self._roi:
-            x,y,w,h = self._roi
-            rx, ry = iw(x,y)
-            rw = int(w*self._scale); rh = int(h*self._scale)
-            p.setPen(QtGui.QPen(COLOR_ROI, 2, QtCore.Qt.SolidLine))
-            p.drawRect(rx, ry, rw, rh)
+            # --- ROI (modrý obdĺžnik) ---
+            if self._roi:
+                x,y,w,h = self._roi
+                rx, ry = iw(x,y)
+                rw = int(w*self._scale); rh = int(h*self._scale)
+                p.setPen(QtGui.QPen(COLOR_ROI, 2, QtCore.Qt.SolidLine))
+                p.drawRect(rx, ry, rw, rh)
 
-        # --- Shape (žltý) – najprv hotový shape, potom dočasný ---
-        p.setPen(QtGui.QPen(COLOR_SHAPE, 2, QtCore.Qt.SolidLine))
+            # --- Shape (žltý) – najprv hotový shape, potom dočasný ---
+            p.setPen(QtGui.QPen(COLOR_SHAPE, 2, QtCore.Qt.SolidLine))
 
-        def draw_shape(shape):
-            if not shape or "shape" not in shape: return
-            s = shape.get("shape")
-            if s == "line":
-                pts = shape.get("pts") or []
-                if len(pts) == 2:
-                    (x1,y1),(x2,y2) = pts
-                    ax, ay = iw(x1,y1); bx, by = iw(x2,y2)
-                    p.drawLine(ax, ay, bx, by)
-            elif s == "circle":
-                cx = shape.get("cx"); cy = shape.get("cy"); r = shape.get("r",0)
-                if cx is not None and cy is not None and r is not None and r > 0:
-                    cwx, cwy = iw(cx, cy)
-                    rw = int(r*self._scale)
-                    rect = QtCore.QRect(cwx - rw, cwy - rw, 2*rw, 2*rw)
-                    p.drawEllipse(rect)
-            elif s == "polyline":
-                pts = shape.get("pts") or []
-                if len(pts) >= 2:
-                    qpts = [QtCore.QPoint(*iw(x,y)) for (x,y) in pts]
-                    for i in range(len(qpts)-1):
-                        p.drawLine(qpts[i], qpts[i+1])
+            def draw_shape(shape):
+                if not shape or "shape" not in shape: return
+                s = shape.get("shape")
+                if s == "line":
+                    pts = shape.get("pts") or []
+                    if len(pts) == 2:
+                        (x1,y1),(x2,y2) = pts
+                        ax, ay = iw(x1,y1); bx, by = iw(x2,y2)
+                        p.drawLine(ax, ay, bx, by)
+                elif s == "circle":
+                    cx = shape.get("cx"); cy = shape.get("cy"); r = shape.get("r",0)
+                    if cx is not None and cy is not None and r is not None and r > 0:
+                        cwx, cwy = iw(cx, cy)
+                        rw = int(r*self._scale)
+                        rect = QtCore.QRect(cwx - rw, cwy - rw, 2*rw, 2*rw)
+                        p.drawEllipse(rect)
+                elif s == "polyline":
+                    pts = shape.get("pts") or []
+                    if len(pts) >= 2:
+                        qpts = [QtCore.QPoint(*iw(x,y)) for (x,y) in pts]
+                        for i in range(len(qpts)-1):
+                            p.drawLine(qpts[i], qpts[i+1])
 
-        # hotový shape
-        draw_shape(self._shape)
-        # rozkreslený dočasný shape (line/circle počas ťahania)
-        if self._tmp_shape:
-            pen = QtGui.QPen(COLOR_SHAPE, 2, QtCore.Qt.DashLine)
-            p.setPen(pen)
-            draw_shape(self._tmp_shape)
+            # hotový shape
+            draw_shape(self._shape)
+            # rozkreslený dočasný shape (line/circle počas ťahania)
+            if self._tmp_shape:
+                pen = QtGui.QPen(COLOR_SHAPE, 2, QtCore.Qt.DashLine)
+                p.setPen(pen)
+                draw_shape(self._tmp_shape)
 
-        # polyline – práve rozkresľované body
-        if self._mode == "polyline" and self._poly_points:
-            pen = QtGui.QPen(COLOR_SHAPE, 2, QtCore.Qt.DashLine)
-            p.setPen(pen)
-            qpts = [QtCore.QPoint(*iw(x,y)) for (x,y) in self._poly_points]
-            for i in range(len(qpts)-1):
-                p.drawLine(qpts[i], qpts[i+1])
-            # body
-            brush = QtGui.QBrush(COLOR_SHAPE)
-            for qp in qpts:
-                p.setBrush(brush)
-                p.drawEllipse(qp, 3, 3)
+            # polyline – práve rozkresľované body
+            if self._mode == "polyline" and self._poly_points:
+                pen = QtGui.QPen(COLOR_SHAPE, 2, QtCore.Qt.DashLine)
+                p.setPen(pen)
+                qpts = [QtCore.QPoint(*iw(x,y)) for (x,y) in self._poly_points]
+                for i in range(len(qpts)-1):
+                    p.drawLine(qpts[i], qpts[i+1])
+                # body
+                brush = QtGui.QBrush(COLOR_SHAPE)
+                for qp in qpts:
+                    p.setBrush(brush)
+                    p.drawEllipse(qp, 3, 3)
 
-        # práve kreslený obdĺžnik (ROI/mask)
-        if self._rect:
-            x,y,w,h = self._rect
-            rx, ry = iw(x,y)
-            rw = int(w*self._scale); rh = int(h*self._scale)
-            color = COLOR_ROI if self._mode=="roi" else COLOR_MASK
-            p.setPen(QtGui.QPen(color, 2, QtCore.Qt.DashLine))
-            p.drawRect(rx, ry, rw, rh)
-
-        p.end()
+            # práve kreslený obdĺžnik (ROI/mask)
+            if self._rect:
+                x,y,w,h = self._rect
+                rx, ry = iw(x,y)
+                rw = int(w*self._scale); rh = int(h*self._scale)
+                color = COLOR_ROI if self._mode=="roi" else COLOR_MASK
+                p.setPen(QtGui.QPen(color, 2, QtCore.Qt.DashLine))
+                p.drawRect(rx, ry, rw, rh)
 
     # ----------------- Mouse logika -----------------
 
