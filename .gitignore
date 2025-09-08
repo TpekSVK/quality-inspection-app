@@ -26,3 +26,24 @@ run_logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Lokálne nastavenia (citlivé)
+settings.json
+
+# Výstupy aplikácie
+filmstrip/
+export/
+
+# Modely a váhy (ak budeš používať)
+models/
+*.pt
+*.onnx
+
+# Logy a cache
+*.log
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Ďalšie IDE
+.idea/
