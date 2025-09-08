@@ -23,12 +23,8 @@ class BlobCountTool(BaseTool):
 
     def run(self, img_ref, img_cur, fixture_transform=None) -> ToolResult:
         # 1) dorovnaj current do ref (aby ROI/masky sedeli 1:1)
-        if fixture_transform is not None:
-            cur_aligned = cv.warpPerspective(img_cur, fixture_transform, (img_ref.shape[1], img_ref.shape[0]))
-        elif img_cur.shape[:2] != img_ref.shape[:2]:
-            cur_aligned = cv.resize(img_cur, (img_ref.shape[1], img_ref.shape[0]), interpolation=cv.INTER_LINEAR)
-        else:
-            cur_aligned = img_cur
+        cur_aligned = self.align_current_to_ref(img_ref, img_cur, fixture_transform)
+            
 
         # 2) bezpečné ROI
         x, y, w, h = [int(v) for v in self.roi_xywh]
@@ -47,20 +43,8 @@ class BlobCountTool(BaseTool):
         # 3) maska do ROI-lokálnych súradníc
         params = dict(self.params or {})
         mask_rects = params.get("mask_rects", []) or []
-        m = None
-        if mask_rects:
-            m = np.full((h, w), 255, np.uint8)
-            for (rx, ry, rw, rh) in mask_rects:
-                Lx = max(x, int(rx))
-                Ly = max(y, int(ry))
-                Rx = min(x + w, int(rx) + int(rw))
-                Ry = min(y + h, int(ry) + int(rh))
-                if Rx > Lx and Ry > Ly:
-                    fx = Lx - x
-                    fy = Ly - y
-                    fw = Rx - Lx
-                    fh = Ry - Ly
-                    m[fy:fy+fh, fx:fx+fw] = 0
+        m = self.roi_mask_intersection(x, y, w, h, mask_rects, roi_shape=(h, w)) if mask_rects else None
+
 
 
         # 4) predspracovanie
@@ -102,6 +86,8 @@ class BlobCountTool(BaseTool):
                 contours_abs.append(ca)
 
         details = {
+            "roi_xywh": (x, y, w, h),
+            "mask_rects": mask_rects,
             "preproc_desc": self._preproc_desc(chain),
             "min_area": min_area,
             "invert": bool(params.get("invert", False)),
@@ -112,6 +98,7 @@ class BlobCountTool(BaseTool):
             "draw_contours": draw_contours,
             "contours_abs": contours_abs
         }
+
 
         return ToolResult(
             ok=ok, measured=measured, lsl=lsl, usl=usl,

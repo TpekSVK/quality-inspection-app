@@ -29,13 +29,9 @@ class PresenceAbsenceTool(BaseTool):
     def run(self, img_ref: np.ndarray, img_cur: np.ndarray, fixture_transform: Optional[np.ndarray]) -> ToolResult:
         x, y, w, h = [int(v) for v in self.roi_xywh]
 
-        # aktuálny obrázok najprv premapuj do rozmeru referencie
-        if fixture_transform is not None:
-            cur_aligned = cv.warpPerspective(img_cur, fixture_transform, (img_ref.shape[1], img_ref.shape[0]))
-        elif img_cur.shape[:2] != img_ref.shape[:2]:
-            cur_aligned = cv.resize(img_cur, (img_ref.shape[1], img_ref.shape[0]), interpolation=cv.INTER_LINEAR)
-        else:
-            cur_aligned = img_cur
+        # zarovnanie jednotne cez BaseTool helper
+        cur_aligned = self.align_current_to_ref(img_ref, img_cur, fixture_transform)
+
 
         roi_cur = cur_aligned[y:y+h, x:x+w]
         if roi_cur.ndim == 3:
@@ -52,11 +48,8 @@ class PresenceAbsenceTool(BaseTool):
 
         # masky (ignorovať časti)
         mask_rects = (self.params or {}).get("mask_rects", []) or []
-        if mask_rects:
-            full_mask = _mask_from_rects_ignore((roi_cur.shape[0], roi_cur.shape[1]), rects=[ [rx-x, ry-y, rw, rh] for (rx,ry,rw,rh) in mask_rects ])
+        full_mask = self.roi_mask_intersection(x, y, w, h, mask_rects, roi_shape=roi_cur.shape) if mask_rects else None
 
-        else:
-            full_mask = None
 
         # predspracovanie (rovnako na tpl aj cur), rešpektuj masku
         pre_desc = "—"
@@ -85,8 +78,9 @@ class PresenceAbsenceTool(BaseTool):
         top_left = max_loc if method != cv.TM_SQDIFF_NORMED else min_loc
         cv.rectangle(overlay, top_left, (top_left[0]+w_t, top_left[1]+h_t), (0,255,0) if ok else (0,0,255), 2)
 
-        details = {"roi_xywh": (x,y,w,h), "score": measured, "minScore": minScore}
+        details = {"roi_xywh": (x,y,w,h), "mask_rects": mask_rects, "score": measured, "minScore": minScore}
         details["preproc_desc"] = pre_desc
         details["preproc_preview"] = pre_preview
+
 
         return ToolResult(ok=ok, measured=measured, lsl=lsl, usl=usl, details=details, overlay=overlay)

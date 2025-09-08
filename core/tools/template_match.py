@@ -74,10 +74,15 @@ class TemplateMatchTool(BaseTool):
     """
     def run(self, img_ref, img_cur, fixture_transform=None):
         x, y, w, h = [int(v) for v in self.roi_xywh]
-        Hc, Wc = img_cur.shape[:2]
-        # bezpečné orezy
+
+        # dorovnaj current na referenciu (fixture H alebo resize)
+        img_cur = self.align_current_to_ref(img_ref, img_cur, fixture_transform)
+
+        # bezpečné orezy v referenčných rozmeroch
+        Hc, Wc = img_ref.shape[:2]
         x = max(0, min(x, Wc - 1)); y = max(0, min(y, Hc - 1))
         w = max(1, min(w, Wc - x));  h = max(1, min(h, Hc - y))
+
 
         p = dict(self.params or {})
         min_score   = float(p.get("min_score", 0.70))
@@ -92,11 +97,10 @@ class TemplateMatchTool(BaseTool):
         roi_cur = img_cur[y:y+h, x:x+w]
 
         # maska prienikom
-        m = _apply_mask_intersection(x, y, w, h, mask_rects, roi_ref.shape)
+        m = self.roi_mask_intersection(x, y, w, h, mask_rects, roi_shape=roi_ref.shape) if mask_rects else None
+        roi_ref_p = self._apply_preproc_chain(roi_ref, chain, mask=m)
+        roi_cur_p = self._apply_preproc_chain(roi_cur, chain, mask=m)
 
-        # preproc (na oba, aby boli porovnateľné)
-        roi_ref_p = _apply_preproc_chain(roi_ref, chain, mask=m)
-        roi_cur_p = _apply_preproc_chain(roi_cur, chain, mask=m)
 
         # template = celá ROI z referencie (po preproc)
         tpl = roi_ref_p.copy()

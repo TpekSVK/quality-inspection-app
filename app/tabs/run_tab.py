@@ -225,6 +225,7 @@ class RunTab(QtWidgets.QWidget):
 
     # ---------- Render ----------
     def _render_out(self, frame_gray, out):
+        # 1) OK/NOK + latencia
         ok = out.get("ok", True)
         self.lbl_verdict.setText("OK" if ok else "NOK")
         self.lbl_verdict.setStyleSheet(
@@ -232,62 +233,48 @@ class RunTab(QtWidgets.QWidget):
             ("#2e7d32" if ok else "#c62828")
         )
         self.lbl_latency.setText(f"lat: {out.get('elapsed_ms',0.0):.1f} ms")
-        
-        
-        # udrž strip synchronizovaný s počtom nástrojov a základným obrázkom
-        tools = getattr(self.state.pipeline, "tools", []) or []
-        ref_for_strip = getattr(self.state, "ref_img", None)
-        if ref_for_strip is None:
-            ref_for_strip = self._last_frame
-        self.tool_strip.set_tools_if_needed(tools, ref_for_strip, self._last_frame)
 
-
+        # 2) dorovnaj veľkosť na referenciu (1:1 so všetkými ROI/maskami)
         if self.state.ref_img is not None:
             ref_h, ref_w = self.state.ref_img.shape[:2]
         else:
             ref_h, ref_w = frame_gray.shape[:2]
 
+        if frame_gray.shape[:2] != (ref_h, ref_w):
+            frame_aligned = cv.resize(frame_gray, (ref_w, ref_h), interpolation=cv.INTER_LINEAR)
+        else:
+            frame_aligned = frame_gray
+
+        # 3) tool strip synchronizácia (základ pre náhľady)
+        tools = getattr(self.state.pipeline, "tools", []) or []
+        ref_img = getattr(self.state, "ref_img", None)
+        ref_for_strip = ref_img if ref_img is not None else frame_aligned
+        self.tool_strip.set_tools_if_needed(tools, ref_for_strip, frame_aligned)
+
+
+        # 4) vyber view mód
         mode = self._view_mode()
-        img_to_show = frame_gray
 
-        # ak je vybraný náhľad "ROI po preproc", vyrob podklad s vloženým preproc ROI (ako v Builderi)
-        if mode == "roi_preproc":
-            img_to_show = self._match_ref_size(img_to_show)
-            tool = None
-            try:
-                tools = getattr(self.state.pipeline, "tools", []) or []
-                if tools and self._visible_tool_idx is not None and 0 <= self._visible_tool_idx < len(tools):
-                    tool = tools[self._visible_tool_idx]
-            except Exception:
-                tool = None
-            img_to_show = self._apply_preproc_view_into_frame(img_to_show, tool)
+        # 5) CLEAN režim: úplne čistý obraz, žiadne overlay-e
+        if mode == "clean":
+            comp = cv.cvtColor(frame_aligned, cv.COLOR_GRAY2BGR)
+            self.view.set_ndarray(comp)
+            self.tool_strip.update_status(out, getattr(self.state, "ref_img", None), self._last_frame)
+            self._update_last_measure_log(out)
+            self._push_to_filmstrip(comp)
+            return
 
-        comp = compose_overlay(img_to_show, (ref_h, ref_w), out, self._visible_tool_idx, view_mode=mode)
-
-
-        # --- Blob-count: kontúry (ak tool poslal a sú zapnuté) ---
-        try:
-            vis_idx = self._visible_tool_idx
-            if vis_idx is not None and 0 <= vis_idx < len(out.get("results", [])):
-                r = out["results"][vis_idx]
-                details = getattr(r, "details", {}) or {}
-                if details.get("draw_contours", False) and details.get("contours_abs"):
-                    for c in details["contours_abs"]:
-                        try:
-                            cv.drawContours(comp, [np.asarray(c, dtype=np.int32)], -1, (0, 220, 0), 2, lineType=cv.LINE_AA)
-                        except Exception:
-                            continue
-        except Exception:
-            pass
-
+        # 6) Ostatné režimy kreslí jednotný overlay engine
+        comp = compose_overlay(frame_aligned, (ref_h, ref_w), out, self._visible_tool_idx, view_mode=mode)
         self.view.set_ndarray(comp)
 
-
-
-        # zaktualizuj náhľady (OK/NOK pásik + tooltipy)
+        # 7) stav stripu a log
         self.tool_strip.update_status(out, getattr(self.state, "ref_img", None), self._last_frame)
+        self._update_last_measure_log(out)
+        self._push_to_filmstrip(comp)
 
-
+    def _update_last_measure_log(self, out: dict):
+        # prehľad výsledkov do pravého text boxu
         lines = []
         for r in out.get("results", []):
             name     = getattr(r, "name", "nástroj")
@@ -295,144 +282,46 @@ class RunTab(QtWidgets.QWidget):
             lsl      = getattr(r, "lsl", None)
             usl      = getattr(r, "usl", None)
             ok_t     = getattr(r, "ok", True)
-
-            # načítaj detaily skôr, aby sme vedeli prípadne prepnúť jednotky
-            details  = getattr(r, "details", {}) or {}
             units    = getattr(r, "units", "")
 
-            # override jednotiek pre edge-trace, ak metrika je coverage_pct
+            details  = getattr(r, "details", {}) or {}
             if details.get("metric") == "coverage_pct":
                 units = "%"
-
-
-
 
             units_str = f" {units}" if units else ""
             lines.append(f"{name} | hodnota={float(measured):.2f}{units_str}  LSL={lsl}  USL={usl}  -> {'OK' if ok_t else 'NOK'}")
 
-            # >>> NOVÉ: vypíš reťazec predspracovania, ak ho tool poslal
             pre = details.get("preproc_desc")
             if pre:
                 lines.append(f"   ↳ preproc: {pre}")
 
-            # Edge-trace: metrika a štatistiky
-            metric = details.get("metric")
-            if metric == "coverage_pct":
-                cov = details.get("coverage_pct", 0.0)
-                edges = details.get("edges_px", 0)
-                band = details.get("band_px", 0)
-                canny_lo = details.get("canny_lo", None)
-                canny_hi = details.get("canny_hi", None)
-                lines.append(f"   ↳ metric={metric} | coverage={cov:.1f}%  edges={edges}/{band}  canny={canny_lo}/{canny_hi}")
-            elif metric == "px_gap":
-                gap = details.get("gap_px", 0)
-                edges = details.get("edges_px", 0)
-                band = details.get("band_px", 0)
-                canny_lo = details.get("canny_lo", None)
-                canny_hi = details.get("canny_hi", None)
-                lines.append(f"   ↳ metric={metric} | gap_px={gap}  edges={edges}/{band}  canny={canny_lo}/{canny_hi}")
+            # template match summary
+            if "best_score" in details or "count" in details:
+                mode = details.get("mode","best")
+                if mode == "count":
+                    lines.append(f"   ↳ mode=count | count={details.get('count',0)}  min_score={details.get('min_score',0.0):.2f}")
+                else:
+                    lines.append(f"   ↳ mode=best  | best_score={details.get('best_score',0.0):.2f}  min_score={details.get('min_score',0.0):.2f}")
 
-            # diff_from_ref: ak tool poslal tieto polia, ukáž tuning parametre
+            # hough circle summary
+            if "count" in details and "minRadius" in details:
+                lines.append(f"   ↳ hough: count={details['count']} R=[{details['minRadius']},{details['maxRadius']}] p1={details['param1']} p2={details['param2']}")
+
+            # diff_from_ref tuning
             if {"measure","thresh","morph_open","min_blob_area"} <= set(details.keys()):
                 measure_name = "Plocha vád (px²)" if details.get("measure") == "area" else "Počet vád"
                 lines.append(
                     f"   ↳ measure={measure_name}  thresh={details.get('thresh')}  "
                     f"morph={details.get('morph_open')}  min_blob={details.get('min_blob_area')}"
                 )
-
-
         self.lbl_last.setPlainText("\n".join(lines))
 
-
-
-        rgb = cv.cvtColor(comp, cv.COLOR_BGR2RGB)
+    def _push_to_filmstrip(self, bgr_img):
+        rgb = cv.cvtColor(bgr_img, cv.COLOR_BGR2RGB)
         h, w = rgb.shape[:2]
         qimg = QtGui.QImage(rgb.data, w, h, 3*w, QtGui.QImage.Format_RGB888)
         self.film.add_pixmap(QtGui.QPixmap.fromImage(qimg))
-    
-    
 
-
-
-
-        # zaktualizuj náhľady (OK/NOK pásik + tooltipy)
-        self.tool_strip.update_status(out, getattr(self.state, "ref_img", None), self._last_frame)
-
-
-        lines = []
-        for r in out.get("results", []):
-            name     = getattr(r, "name", "nástroj")
-            measured = getattr(r, "measured", 0.0)
-            lsl      = getattr(r, "lsl", None)
-            usl      = getattr(r, "usl", None)
-            ok_t     = getattr(r, "ok", True)
-
-            # načítaj detaily skôr, aby sme vedeli prípadne prepnúť jednotky
-            details  = getattr(r, "details", {}) or {}
-            units    = getattr(r, "units", "")
-
-            # override jednotiek pre edge-trace, ak metrika je coverage_pct
-            if details.get("metric") == "coverage_pct":
-                units = "%"
-
-
-
-
-            units_str = f" {units}" if units else ""
-            lines.append(f"{name} | hodnota={float(measured):.2f}{units_str}  LSL={lsl}  USL={usl}  -> {'OK' if ok_t else 'NOK'}")
-
-            # >>> NOVÉ: vypíš reťazec predspracovania, ak ho tool poslal
-            pre = details.get("preproc_desc")
-            if pre:
-                lines.append(f"   ↳ preproc: {pre}")
-
-            # Edge-trace: metrika a štatistiky
-            metric = details.get("metric")
-            if metric == "coverage_pct":
-                cov = details.get("coverage_pct", 0.0)
-                edges = details.get("edges_px", 0)
-                band = details.get("band_px", 0)
-                canny_lo = details.get("canny_lo", None)
-                canny_hi = details.get("canny_hi", None)
-                lines.append(f"   ↳ metric={metric} | coverage={cov:.1f}%  edges={edges}/{band}  canny={canny_lo}/{canny_hi}")
-            elif metric == "px_gap":
-                gap = details.get("gap_px", 0)
-                edges = details.get("edges_px", 0)
-                band = details.get("band_px", 0)
-                canny_lo = details.get("canny_lo", None)
-                canny_hi = details.get("canny_hi", None)
-                lines.append(f"   ↳ metric={metric} | gap_px={gap}  edges={edges}/{band}  canny={canny_lo}/{canny_hi}")
-
-            # diff_from_ref: ak tool poslal tieto polia, ukáž tuning parametre
-            if {"measure","thresh","morph_open","min_blob_area"} <= set(details.keys()):
-                measure_name = "Plocha vád (px²)" if details.get("measure") == "area" else "Počet vád"
-                lines.append(
-                    f"   ↳ measure={measure_name}  thresh={details.get('thresh')}  "
-                    f"morph={details.get('morph_open')}  min_blob={details.get('min_blob_area')}"
-                )
-            
-            # Blob-count: vypíš count/sum_area ak sú v details
-            if "count" in details or "sum_area_px2" in details:
-                cnt = details.get("count", None)
-                sarea = details.get("sum_area_px2", None)
-                metric = details.get("metric", "")
-                info = []
-                if cnt is not None: info.append(f"count={int(cnt)} ks")
-                if sarea is not None: info.append(f"sum_area={float(sarea):.1f} px²")
-                if info:
-                    lines.append("   ↳ blob: " + "  |  ".join(info) + (f"   (metric={metric})" if metric else ""))
-
-
-
-        self.lbl_last.setPlainText("\n".join(lines))
-
-
-
-        rgb = cv.cvtColor(comp, cv.COLOR_BGR2RGB)
-        h, w = rgb.shape[:2]
-        qimg = QtGui.QImage(rgb.data, w, h, 3*w, QtGui.QImage.Format_RGB888)
-        self.film.add_pixmap(QtGui.QPixmap.fromImage(qimg))
-    
     
 
 

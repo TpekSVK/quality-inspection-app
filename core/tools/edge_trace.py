@@ -91,12 +91,10 @@ class _EdgeTraceBase(BaseTool):
         if img_ref is None or img_cur is None or img_cur.size == 0:
             return ToolResult(False, 0.0, self.lsl, self.usl, {"error":"empty image", "roi_xywh": self.roi_xywh})
 
-        # 1) Zarovnanie na referenciu
-        cur_ref = _warp_to_ref(img_cur, img_ref.shape[:2], fixture_transform)
-        if cur_ref.ndim == 3:
-            cur_gray = cv.cvtColor(cur_ref, cv.COLOR_BGR2GRAY)
-        else:
-            cur_gray = cur_ref
+        # 1) Zarovnanie na referenciu (jednotné cez BaseTool helper)
+        cur_ref = self.align_current_to_ref(img_ref, img_cur, fixture_transform)
+        cur_gray = cv.cvtColor(cur_ref, cv.COLOR_BGR2GRAY) if cur_ref.ndim == 3 else cur_ref
+
 
         # 2) ROI crop
         x, y, w, h = [int(v) for v in self.roi_xywh]
@@ -116,22 +114,10 @@ class _EdgeTraceBase(BaseTool):
         pre_desc = "—"
         pre_preview = None
 
-        # postav masku v rámci ROI (255 = analyzuj, 0 = ignoruj)
-        full_mask = None
+        # ROI maska (255=analyzuj, 0=ignoruj) – jednotne cez BaseTool helper
         mask_rects = (self.params or {}).get("mask_rects", []) or []
-        if mask_rects:
-            full_mask = np.full((h, w), 255, np.uint8)
-            for (rx, ry, rw, rh) in mask_rects:
-                Lx = max(x, int(rx))
-                Ly = max(y, int(ry))
-                Rx = min(x + w, int(rx) + int(rw))
-                Ry = min(y + h, int(ry) + int(rh))
-                if Rx > Lx and Ry > Ly:
-                    fx = Lx - x
-                    fy = Ly - y
-                    fw = Rx - Lx
-                    fh = Ry - Ly
-                    full_mask[fy:fy+fh, fx:fx+fw] = 0
+        full_mask = self.roi_mask_intersection(x, y, w, h, mask_rects, roi_shape=roi_gray.shape) if mask_rects else None
+
 
 
         chain = p_global.get("preproc", []) or []
@@ -161,6 +147,7 @@ class _EdgeTraceBase(BaseTool):
 
         details = {
             "roi_xywh": roi,
+            "mask_rects": mask_rects,  # <- pre overlay v RUN
             "shape": p_global.get("shape"),
             "width": int(p_global.get("width", 3)),
             "canny_lo": canny_lo, "canny_hi": canny_hi,
@@ -170,6 +157,7 @@ class _EdgeTraceBase(BaseTool):
             "coverage_pct": float(stats["coverage_pct"]),
             "metric": metric,
         }
+
         details["preproc_desc"] = pre_desc
         details["preproc_preview"] = pre_preview
         return ToolResult(ok=ok, measured=measured, lsl=self.lsl, usl=self.usl, details=details, overlay=stats["overlay"])

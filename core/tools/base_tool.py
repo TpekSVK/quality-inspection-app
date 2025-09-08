@@ -226,3 +226,27 @@ class BaseTool(ABC):
             p  = ", ".join([f"{k}={v}" for k,v in st.items() if k!="op"])
             parts.append(f"{op}({p})" if p else op)
         return " → ".join(parts)
+    # v class BaseTool:
+    @staticmethod
+    def roi_mask_intersection(x, y, w, h, mask_rects, roi_shape):
+        """ROI-lokálna maska (255=analyzuj) ako prienik ROI a mask_rects."""
+        if not mask_rects:
+            return None
+        H, W = roi_shape[:2]
+        m = np.full((H, W), 255, np.uint8)
+        for (rx, ry, rw, rh) in mask_rects:
+            Lx = max(x, int(rx)); Ly = max(y, int(ry))
+            Rx = min(x + w, int(rx) + int(rw)); Ry = min(y + h, int(ry) + int(rh))
+            if Rx > Lx and Ry > Ly:
+                fx = Lx - x; fy = Ly - y; fw = Rx - Lx; fh = Ry - Ly
+                m[fy:fy+fh, fx:fx+fw] = 0
+        return m
+
+    @staticmethod
+    def align_current_to_ref(img_ref, img_cur, fixture_transform=None):
+        """Zarovná curr. frame na veľkosť/rovinu referencie (warp H alebo resize)."""
+        if fixture_transform is not None:
+            return cv.warpPerspective(img_cur, fixture_transform, (img_ref.shape[1], img_ref.shape[0]))
+        if img_cur.shape[:2] != img_ref.shape[:2]:
+            return cv.resize(img_cur, (img_ref.shape[1], img_ref.shape[0]), interpolation=cv.INTER_LINEAR)
+        return img_cur

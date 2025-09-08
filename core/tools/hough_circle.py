@@ -55,9 +55,14 @@ class HoughCircleTool(BaseTool):
     """
     def run(self, img_ref, img_cur, fixture_transform=None):
         x, y, w, h = [int(v) for v in self.roi_xywh]
-        Hc, Wc = img_cur.shape[:2]
+
+        # dorovnaj current na referenciu
+        img_cur = self.align_current_to_ref(img_ref, img_cur, fixture_transform)
+
+        Hc, Wc = img_ref.shape[:2]
         x = max(0, min(x, Wc-1)); y = max(0, min(y, Hc-1))
         w = max(1, min(w, Wc - x)); h = max(1, min(h, Hc - y))
+
 
         p = dict(self.params or {})
         dp        = float(p.get("dp", 1.2))
@@ -70,8 +75,9 @@ class HoughCircleTool(BaseTool):
         mask_rects= p.get("mask_rects", []) or []
 
         roi = img_cur[y:y+h, x:x+w]
-        m = _apply_mask_intersection(x, y, w, h, mask_rects, roi.shape)
-        roi_p = _apply_preproc_chain(roi, chain, mask=m)
+        m = self.roi_mask_intersection(x, y, w, h, mask_rects, roi_shape=roi.shape) if mask_rects else None
+        roi_p = self._apply_preproc_chain(roi, chain, mask=m)
+
 
         # HoughCircles potrebuje jemný blur
         try:

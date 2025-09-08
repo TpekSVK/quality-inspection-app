@@ -57,17 +57,20 @@ class DiffFromRefTool(BaseTool):
     def run(self, img_ref: np.ndarray, img_cur: np.ndarray, fixture_transform: Optional[np.ndarray]) -> ToolResult:
        
        
-        # 1) do rozmeru referencie
+        # 1) do rozmeru referencie (jednotné cez BaseTool helper)
         ref_gray = cv.cvtColor(img_ref, cv.COLOR_BGR2GRAY) if img_ref.ndim == 3 else img_ref
-        cur_to_ref = _warp_to_ref(img_cur, ref_gray.shape[:2], fixture_transform)
+        cur_to_ref = self.align_current_to_ref(img_ref, img_cur, fixture_transform)
         cur_gray = cv.cvtColor(cur_to_ref, cv.COLOR_BGR2GRAY) if cur_to_ref.ndim == 3 else cur_to_ref
 
-        # 2) maska: mask_rects = IGNOROVAŤ tieto obdĺžniky
+
+        # 2) maska: mask_rects (ignoruje sa) alebo maska zo súboru
         params = self.params or {}
         mask_rects = params.get("mask_rects", []) or []
         mask_path = params.get("mask_path", None)
 
+        mask_full = None
         if mask_rects:
+            # najprv „full“ (kvôli fallbacku), reálne však pre ROI použijeme ROI-lokálnu cez helper nižšie
             mask_full = _mask_from_rects_ignore(ref_gray.shape[:2], mask_rects)
         else:
             mask_full = _load_mask(mask_path)
@@ -76,14 +79,22 @@ class DiffFromRefTool(BaseTool):
         if mask_full is None:
             mask_full = np.full(ref_gray.shape[:2], 255, np.uint8)
 
-        # 3) ROI v referenčných súradniciach
+
+        # 3) ROI v referenčných súradniciach + ROI-lokálna maska
         x, y, w, h = self.roi_xywh
         roi_ref  = _safe_crop(ref_gray, (x,y,w,h))
         roi_cur  = _safe_crop(cur_gray, (x,y,w,h))
-        roi_mask = _safe_crop(mask_full, (x,y,w,h))
+
+        # maska do ROI lokálu:
+        if mask_rects:
+            roi_mask = self.roi_mask_intersection(x, y, w, h, mask_rects, roi_shape=roi_ref.shape)
+        else:
+            roi_mask_full = mask_full  # zo súboru alebo full-255
+            roi_mask = _safe_crop(roi_mask_full, (x,y,w,h))
 
         roi_ref, roi_cur = _align_same_size(roi_ref, roi_cur)
         roi_mask, _      = _align_same_size(roi_mask, roi_cur)
+
 
         pre_desc = "—"
         pre_preview = None

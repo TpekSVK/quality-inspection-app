@@ -128,14 +128,9 @@ class YOLOInROITool(BaseTool):
 
         x, y, w, h = [int(v) for v in self.roi_xywh]
 
-        # najprv zarovnaj celý current snímok do súradníc REFERENCIE
-        if fixture_transform is not None:
-            cur_aligned = cv.warpPerspective(img_cur, fixture_transform, (img_ref.shape[1], img_ref.shape[0]))
-        elif img_cur.shape[:2] != img_ref.shape[:2]:
-            # fallback: ak nie je H, zjednoť rozmer na rozmer referencie
-            cur_aligned = cv.resize(img_cur, (img_ref.shape[1], img_ref.shape[0]), interpolation=cv.INTER_LINEAR)
-        else:
-            cur_aligned = img_cur
+        # zarovnanie jednotne cez BaseTool helper
+        cur_aligned = self.align_current_to_ref(img_ref, img_cur, fixture_transform)
+
 
         # až teraz vyrež ROI v referenčných súradniciach
         roi = cur_aligned[y:y+h, x:x+w]
@@ -144,21 +139,9 @@ class YOLOInROITool(BaseTool):
 
 
         # -------------------- MASKA v ROI (255 = analyzuj, 0 = ignoruj) --------------------
-        full_mask = None
         mask_rects = (self.params or {}).get("mask_rects", []) or []
-        if mask_rects:
-            full_mask = np.full((h, w), 255, np.uint8)
-            for (rx, ry, rw, rh) in mask_rects:
-                Lx = max(x, int(rx))
-                Ly = max(y, int(ry))
-                Rx = min(x + w, int(rx) + int(rw))
-                Ry = min(y + h, int(ry) + int(rh))
-                if Rx > Lx and Ry > Ly:
-                    fx = Lx - x
-                    fy = Ly - y
-                    fw = Rx - Lx
-                    fh = Ry - Ly
-                    full_mask[fy:fy+fh, fx:fx+fw] = 0
+        full_mask = self.roi_mask_intersection(x, y, w, h, mask_rects, roi_shape=roi.shape) if mask_rects else None
+
 
 
         # -------------------- PREPROC (len bezpečné op na Y-kanáli) --------------------
@@ -239,11 +222,13 @@ class YOLOInROITool(BaseTool):
 
         details = {
             "roi_xywh": (x, y, w, h),
+            "mask_rects": mask_rects,
             "detections": int(boxes.shape[0]),
             "classes": cls_ids.tolist() if boxes.shape[0] else [],
             "scores": cls_scores.tolist() if boxes.shape[0] else [],
             "preproc_desc": pre_desc
         }
+
         if pre_preview is not None:
             details["preproc_preview"] = pre_preview
 

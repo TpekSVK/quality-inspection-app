@@ -1,10 +1,12 @@
 # app/widgets/roi_drawer.py
 from PyQt5 import QtWidgets, QtGui, QtCore
 import math
+from config import ui_style as UI
 
-COLOR_ROI = QtGui.QColor(33, 150, 243)     # modrá
-COLOR_MASK = QtGui.QColor(156, 39, 176)    # fialová
-COLOR_SHAPE = QtGui.QColor(255, 193, 7)    # žltá (linky/krivky/kružnice)
+COLOR_ROI   = QtGui.QColor(*UI.ROI_RGB)
+COLOR_MASK  = QtGui.QColor(*UI.MASK_RGB)
+COLOR_SHAPE = QtGui.QColor(*UI.SHAPE_RGB)
+
 
 class ROIDrawer(QtWidgets.QLabel):
     """
@@ -185,7 +187,7 @@ class ROIDrawer(QtWidgets.QLabel):
 
         if self._show_overlays:
             # --- Masky (fialové) ---
-            p.setPen(QtGui.QPen(COLOR_MASK, 2, QtCore.Qt.SolidLine))
+            p.setPen(QtGui.QPen(COLOR_MASK, UI.PEN_THIN, QtCore.Qt.SolidLine))
             for (x,y,w,h) in self._masks:
                 rx, ry = iw(x,y)
                 rw = int(w*self._scale); rh = int(h*self._scale)
@@ -196,11 +198,12 @@ class ROIDrawer(QtWidgets.QLabel):
                 x,y,w,h = self._roi
                 rx, ry = iw(x,y)
                 rw = int(w*self._scale); rh = int(h*self._scale)
-                p.setPen(QtGui.QPen(COLOR_ROI, 2, QtCore.Qt.SolidLine))
+                p.setPen(QtGui.QPen(COLOR_ROI, UI.PEN_THICK, QtCore.Qt.SolidLine))                
                 p.drawRect(rx, ry, rw, rh)
 
             # --- Shape (žltý) – najprv hotový shape, potom dočasný ---
-            p.setPen(QtGui.QPen(COLOR_SHAPE, 2, QtCore.Qt.SolidLine))
+            p.setPen(QtGui.QPen(COLOR_SHAPE, UI.PEN_THIN, QtCore.Qt.SolidLine))
+
 
             def draw_shape(shape):
                 if not shape or "shape" not in shape: return
@@ -229,7 +232,7 @@ class ROIDrawer(QtWidgets.QLabel):
             draw_shape(self._shape)
             # rozkreslený dočasný shape (line/circle počas ťahania)
             if self._tmp_shape:
-                pen = QtGui.QPen(COLOR_SHAPE, 2, QtCore.Qt.DashLine)
+                pen = QtGui.QPen(COLOR_SHAPE, UI.PEN_THIN, QtCore.Qt.DashLine)
                 p.setPen(pen)
                 draw_shape(self._tmp_shape)
 
@@ -252,7 +255,8 @@ class ROIDrawer(QtWidgets.QLabel):
                 rx, ry = iw(x,y)
                 rw = int(w*self._scale); rh = int(h*self._scale)
                 color = COLOR_ROI if self._mode=="roi" else COLOR_MASK
-                p.setPen(QtGui.QPen(color, 2, QtCore.Qt.DashLine))
+                p.setPen(QtGui.QPen(color, UI.PEN_THIN, QtCore.Qt.DashLine))
+
                 p.drawRect(rx, ry, rw, rh)
 
     # ----------------- Mouse logika -----------------
