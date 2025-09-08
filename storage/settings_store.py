@@ -50,7 +50,15 @@ class SettingsStore:
 
     # --- camera profiles ---
     def profiles(self) -> List[Dict[str,Any]]:
-        return list(self.data.get("camera_profiles", []))
+        # doplníme default "type" pre staršie profily
+        profs = []
+        for p in self.data.get("camera_profiles", []):
+            q = dict(p)
+            if "type" not in q or not q["type"]:
+                q["type"] = "RTSP (OpenCV/FFmpeg)"
+            profs.append(q)
+        return profs
+
 
     def set_profiles(self, profiles: List[Dict[str,Any]]):
         self.data["camera_profiles"] = profiles
@@ -67,15 +75,22 @@ class SettingsStore:
                 return p
         return None
 
-    def upsert_profile(self, name: str, url: str):
+    def upsert_profile(self, name: str, url: str, cam_type: Optional[str] = None):
+        cam_type = cam_type or "RTSP (OpenCV/FFmpeg)"
         found = False
         for p in self.data.get("camera_profiles", []):
-            if p.get("name")==name:
-                p["url"] = url; found = True; break
+            if p.get("name") == name:
+                p["url"] = url
+                p["type"] = cam_type
+                found = True
+                break
         if not found:
-            self.data.setdefault("camera_profiles", []).append({"name":name,"url":url})
+            self.data.setdefault("camera_profiles", []).append({
+                "name": name, "url": url, "type": cam_type
+            })
         self.data["active_profile"] = name
         self.save()
+
 
     def delete_profile(self, name: str):
         self.data["camera_profiles"] = [p for p in self.data.get("camera_profiles", []) if p.get("name") != name]

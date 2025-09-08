@@ -122,7 +122,7 @@ class RunTab(QtWidgets.QWidget):
         right.addWidget(self.btn_save_ok)
         right.addWidget(self.btn_save_nok)
         right.addWidget(self.live_panel)
-        right.addWidget(QtWidgets.QLabel("Posledné merania: preproc"))
+        right.addWidget(QtWidgets.QLabel("Posledné merania:"))
         right.addWidget(self.lbl_last)
         right.addStretch()
 

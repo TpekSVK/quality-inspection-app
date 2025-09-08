@@ -4,7 +4,9 @@ import cv2 as cv
 import json
 from pathlib import Path
 from app.widgets.image_view import ImageView
+from app.widgets.recipe_picker import RecipePicker
 from storage.recipe_store_json import RecipeStoreJSON
+
 
 class TeachTab(QtWidgets.QWidget):
     def __init__(self, state, parent=None):
@@ -24,9 +26,11 @@ class TeachTab(QtWidgets.QWidget):
         hl.addWidget(btn_load); hl.addWidget(btn_capture)
 
         btn_save = QtWidgets.QPushButton("Uložiť referenciu do receptu...")
-        self.edit_recipe = QtWidgets.QLineEdit("FORMA_X_PRODUCT_Y")
+        self.recipe_picker = RecipePicker(self.state.current_recipe or "FORMA_X_PRODUCT_Y")
         form = QtWidgets.QFormLayout()
-        form.addRow("Názov receptu:", self.edit_recipe)
+        form.addRow("Názov receptu:", self.recipe_picker)
+        self.recipe_picker.changed.connect(lambda name: setattr(self.state, "current_recipe", name))
+
 
         layout.addWidget(self.view)
         layout.addLayout(form)
@@ -61,7 +65,8 @@ class TeachTab(QtWidgets.QWidget):
         self.view.set_ndarray(img)
 
     def save_recipe(self):
-        name = self.edit_recipe.text().strip()
+        name = self.recipe_picker.current()
+
         if not name:
             QtWidgets.QMessageBox.warning(self, "Pozor", "Zadaj názov receptu.")
             return

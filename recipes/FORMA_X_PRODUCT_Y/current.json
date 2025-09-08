@@ -16,51 +16,6 @@
   "pxmm": null,
   "tools": [
     {
-      "type": "diff_from_ref",
-      "name": "Celková plocha všetkých vád",
-      "roi_xywh": [
-        0,
-        0,
-        640,
-        360
-      ],
-      "params": {
-        "blur": 3,
-        "mask_rects": [
-          [
-            260,
-            98,
-            112,
-            100
-          ],
-          [
-            474,
-            244,
-            80,
-            58
-          ]
-        ],
-        "measure": "area",
-        "min_blob_area": 120,
-        "morph_open": 1,
-        "thresh": 35,
-        "preproc": [
-          {
-            "k": 3,
-            "op": "median"
-          },
-          {
-            "clip": 2.0,
-            "op": "clahe",
-            "tile": 8
-          }
-        ]
-      },
-      "lsl": null,
-      "usl": 200.0,
-      "units": "ks"
-    },
-    {
       "type": "_wip_edge_line",
       "name": "Vada na priamke",
       "roi_xywh": [
@@ -75,28 +30,21 @@
         "metric": "px_gap",
         "pts": [
           [
-            61,
-            49
+            10,
+            10
           ],
           [
-            44,
-            189
+            100,
+            10
           ]
         ],
         "shape": "line",
         "width": 3,
-        "mask_rects": [],
-        "preproc": [
-          {
-            "clip": 3.5000000000000013,
-            "op": "clahe",
-            "tile": 3
-          }
-        ]
+        "mask_rects": []
       },
       "lsl": null,
-      "usl": 200.0,
-      "units": "px²"
+      "usl": null,
+      "units": "px"
     },
     {
       "type": "presence_absence",
@@ -108,30 +56,35 @@
         200
       ],
       "params": {
-        "mask_rects": [
-          [
-            156,
-            146,
-            124,
-            87
-          ]
-        ],
-        "minScore": 0.7,
-        "preproc": [
-          {
-            "k": 35,
-            "op": "median"
-          },
-          {
-            "clip": 2.0,
-            "op": "clahe",
-            "tile": 5
-          }
-        ]
+        "mask_rects": []
+      },
+      "lsl": null,
+      "usl": null,
+      "units": "bool"
+    },
+    {
+      "type": "_wip_edge_line",
+      "name": "Hrany – vzdialenosť (priamka)",
+      "roi_xywh": [
+        0,
+        0,
+        200,
+        200
+      ],
+      "params": {
+        "grad_thresh": 0,
+        "mask_rects": [],
+        "metric": "px_gap",
+        "polarity": "auto",
+        "preproc": [],
+        "shape": "line",
+        "width": 3,
+        "canny_lo": 40,
+        "canny_hi": 120
       },
       "lsl": null,
       "usl": 200.0,
-      "units": "ks"
+      "units": "px²"
     }
   ],
   "models": {},

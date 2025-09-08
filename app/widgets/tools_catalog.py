@@ -364,25 +364,6 @@ class ToolCatalogDialog(QtWidgets.QDialog):
                 "desc":"Overí, či je tvar/otvor/objekt prítomný v ROI (podľa jednoduchých feature/edge pravidiel).",
                 "enabled": True
             },
-            # ďalšie podtypy (NCC šablóna, SSIM…) môžeme doplniť neskôr
-            {
-                "id":"template_ncc",
-                "title":"Šablóna (NCC) – skóre",
-                "type":"_wip_template",
-                "params":{},
-                "units":"score",
-                "desc":"Normalised Cross-Correlation proti menšej šablóne. Čoskoro.",
-                "enabled": False
-            },
-            {
-                "id":"template_ncc",
-                "title":"Šablóna (NCC) – skóre",
-                "type":"_wip_template",
-                "params":{},
-                "units":"score",
-                "desc":"Normalised Cross-Correlation proti menšej šablóne. Čoskoro.",
-                "enabled": False
-            },
             {
                 "id":"template_ncc",
                 "title":"Šablóna (NCC)",
@@ -393,44 +374,15 @@ class ToolCatalogDialog(QtWidgets.QDialog):
                     "min_score":0.70,
                     "max_matches":5,
                     "min_distance":12,
-                    "mode":"best"     # "best" | "count"
+                    "mode":"best"
                 },
                 "units":"score",
                 "desc":"Hľadanie vzoru: šablóna = referenčná ROI. Metrika: najlepšie skóre alebo počet nálezov nad min_score.",
                 "enabled": True
             },
-
-
         ]
 
         measure_tools = [
-            {
-                "id":"edge_distance",
-                "title":"Hrany & vzdialenosť",
-                "type":"_wip_edge_distance",
-                "params":{},
-                "units":"mm",
-                "desc":"Zmeria odsadenie medzi dvomi hranami (px→mm). Čoskoro.",
-                "enabled": False
-            },
-            {
-                "id":"hough_circle",
-                "title":"Otvor/kruh (Hough)",
-                "type":"_wip_hough_circle",
-                "params":{},
-                "units":"mm",
-                "desc":"Zistí otvor a priemer v mm, voliteľne kruhovitosť. Čoskoro.",
-                "enabled": False
-            },
-            {
-                "id":"blob_count",
-                "title":"Počítanie kusov (bloby)",
-                "type":"_wip_blob_count",
-                "params":{},
-                "units":"ks",
-                "desc":"Spočíta objekty v ROI po prahovaní. Čoskoro.",
-                "enabled": False
-            },
             {
                 "id":"blob_count",
                 "title":"Počítanie kusov (bloby)",
@@ -466,10 +418,45 @@ class ToolCatalogDialog(QtWidgets.QDialog):
                 "enabled": True
             },
 
-
-
-
+            # === NOVÉ: presné merania po profilovej čiare (LINE) ===
+            {
+                "id":"edge_distance_line",
+                "title":"Hrany – vzdialenosť (priamka)",
+                "type":"_wip_edge_line",   # reuse runtime LINE nástroja
+                "params":{
+                    "mask_rects":[],
+                    "preproc":[],
+                    "shape":"line",
+                    "width":3,
+                    "metric":"edge_distance",
+                    "polarity":"auto",         # auto | dark2light | light2dark
+                    "grad_thresh":0            # 0 = auto
+                },
+                "units":"px",
+                "desc":"Zmeria vzdialenosť prvej a poslednej hrany pozdĺž nakreslenej čiary. Stabilné aj pri šume (profilový prístup).",
+                "enabled": True
+            },
+            {
+                "id":"edge_position_line",
+                "title":"Hrana – poloha (priamka)",
+                "type":"_wip_edge_line",   # reuse runtime LINE nástroja
+                "params":{
+                    "mask_rects":[],
+                    "preproc":[],
+                    "shape":"line",
+                    "width":3,
+                    "metric":"edge_pos",
+                    "edge_pick":"strongest",   # first | last | strongest
+                    "polarity":"auto",
+                    "grad_thresh":0
+                },
+                "units":"px",
+                "desc":"Nájde jednu hranu (first/last/strongest) na profilovej čiare a vráti jej polohu v pixeloch od začiatku čiary.",
+                "enabled": True
+            },
         ]
+
+
 
         texture_tools = [
             {

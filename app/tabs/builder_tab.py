@@ -8,14 +8,17 @@ from app.widgets.preproc_catalog import PreprocDialog
 from storage.recipe_store_json import RecipeStoreJSON
 from app.widgets.roi_drawer import ROIDrawer
 from app.widgets.tools_catalog import ToolCatalogDialog
+from app.widgets.recipe_picker import RecipePicker
+
 try:
     from core.tools.presence_absence import PresenceAbsenceTool
 except Exception:
     PresenceAbsenceTool = None
 try:
-    from core.tools.yolo_roi import YoloRoiTool
+    from core.tools.yolo_roi import YoloROITool
 except Exception:
-    YoloRoiTool = None
+    YoloROITool = None
+
 try:
     from core.tools.diff_from_ref import DiffFromRefTool
 except Exception:
@@ -94,6 +97,21 @@ EDGE_PRESETS = {
     "Hrany – agresívne": {"canny_lo": 60, "canny_hi": 180, "width": 2, "metric": "px_gap"},
 }
 
+# 
+# --- nové presety ---
+TMPL_PRESETS = {
+    "Selektívny (0.85)": {"min_score":0.85, "max_matches":5, "min_distance":12, "mode":"best"},
+    "Hľadač (0.65)":     {"min_score":0.65, "max_matches":10, "min_distance":8, "mode":"best"},
+    "Počet nálezov":     {"min_score":0.70, "max_matches":20, "min_distance":6, "mode":"count"},
+}
+
+HOUGH_PRESETS = {
+    "Malé otvory":   {"dp":1.2, "minDist":12.0, "param1":80.0, "param2":25.0, "minRadius":5,  "maxRadius":20},
+    "Stredné otvory":{"dp":1.2, "minDist":20.0, "param1":100.0,"param2":30.0, "minRadius":20, "maxRadius":60},
+    "Veľké otvory": {"dp":1.2, "minDist":30.0, "param1":120.0,"param2":40.0, "minRadius":60, "maxRadius":200},
+}
+
+
 
 class BuilderTab(QtWidgets.QWidget):
     """
@@ -126,8 +144,12 @@ class BuilderTab(QtWidgets.QWidget):
 
     def _tool_allows_masks(self) -> bool:
         typ = (self._active_tool_type() or "").lower()
-        # masky majú zmysel pre tieto typy nástrojov:
-        return typ in {"diff_from_ref", "presence_absence", "yolo_roi", "blob_count"}
+        # zosúladené s _supports_masks(): masky dávajú zmysel aj pre template_match a hough_circle
+        return typ in {
+            "diff_from_ref", "presence_absence", "yolo_roi", "blob_count",
+            "template_match", "hough_circle"
+    }
+
 
     def _update_mask_buttons(self):
         allow = self._tool_allows_masks()
@@ -164,10 +186,13 @@ class BuilderTab(QtWidgets.QWidget):
         # ĽAVO
         left = QtWidgets.QVBoxLayout()
         hl = QtWidgets.QHBoxLayout()
-        self.edit_recipe = QtWidgets.QLineEdit(self.state.current_recipe or "FORMA_X_PRODUCT_Y")
+        self.recipe_picker = RecipePicker(self.state.current_recipe or "FORMA_X_PRODUCT_Y")
         btn_load = QtWidgets.QPushButton("Načítať")
         btn_save = QtWidgets.QPushButton("Uložiť verziu")
-        hl.addWidget(self.edit_recipe); hl.addWidget(btn_load); hl.addWidget(btn_save)
+        hl.addWidget(self.recipe_picker); hl.addWidget(btn_load); hl.addWidget(btn_save)
+
+        # keď user vyberie iný recept, načítaj ho
+        self.recipe_picker.changed.connect(lambda *_: self.load_recipe())
 
         self.list_tools = QtWidgets.QListWidget()
         self.list_tools.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
@@ -201,7 +226,15 @@ class BuilderTab(QtWidgets.QWidget):
 
         for b in (self.btn_mode_roi, self.btn_mode_mask, self.btn_mode_line, self.btn_mode_circle, self.btn_mode_poly):
             mode_bar.addWidget(b)
+
+        # NOVÉ: LINE 2-klik prepínač
+        self.chk_line_two_click = QtWidgets.QCheckBox("LINE 2-klik")
+        self.chk_line_two_click.setToolTip("Kreslenie čiary: 1. klik = začiatok, 2. klik = koniec.")
+        self.chk_line_two_click.toggled.connect(self.roi_view.set_line_two_click)
+        mode_bar.addWidget(self.chk_line_two_click)
+
         mode_bar.addStretch(1)
+
 
 
 
@@ -301,15 +334,41 @@ class BuilderTab(QtWidgets.QWidget):
         # 1) Edge-trace (čiara/kružnica/krivka)
         self.grp_edge = QtWidgets.QWidget()
         g_edge = QtWidgets.QFormLayout(self.grp_edge)
+
+        # Canny (pre detekciu vád v páse)
         self.spin_canny_lo = QtWidgets.QSpinBox(); self.spin_canny_lo.setRange(0,255); self.spin_canny_lo.setValue(40)
         self.spin_canny_hi = QtWidgets.QSpinBox(); self.spin_canny_hi.setRange(0,255); self.spin_canny_hi.setValue(120)
-        self.cmb_metric = QtWidgets.QComboBox(); self.cmb_metric.addItems(["px_gap (menej=lepšie)", "coverage_pct (viac=lepšie)"])
+
+        # Metrika
+        self.cmb_metric = QtWidgets.QComboBox()
+        self.cmb_metric.addItems([
+            "px_gap (menej=lepšie)",
+            "coverage_pct (viac=lepšie)",
+            "edge_distance (vzdialenosť hrán, px)",
+            "edge_pos (poloha hrany, px)"
+        ])
         self.cmb_metric.currentIndexChanged.connect(self._on_metric_changed)
 
-        self.grp_edge.setToolTip("Parametre vyhodnocovania hrán v páse okolo nakreslenej čiary/kruhu/krivky.")
+        # Profilové parametre (pre edge_distance/edge_pos)
+        self.cmb_polarity = QtWidgets.QComboBox()
+        self.cmb_polarity.addItems(["Auto", "Dark→Light", "Light→Dark"])
+        self.spin_grad = QtWidgets.QSpinBox(); self.spin_grad.setRange(0,255); self.spin_grad.setValue(0)
+
+        # Len pre edge_pos
+        self.cmb_edgepick = QtWidgets.QComboBox()
+        self.cmb_edgepick.addItems(["Strongest", "First", "Last"])
+
+        self.grp_edge.setToolTip("Hrany v páse okolo čiary/kruhu/krivky. Pre 'edge_*' sa používa profil pozdĺž LINE.")
+
+        # default layout – zobrazíme všetko, _on_metric_changed to skryje/nechá
+        g_edge.addRow("Metrika:", self.cmb_metric)
         g_edge.addRow("Canny low:", self.spin_canny_lo)
         g_edge.addRow("Canny high:", self.spin_canny_hi)
-        g_edge.addRow("Metrika:", self.cmb_metric)
+        g_edge.addRow("Polarity:", self.cmb_polarity)
+        g_edge.addRow("Grad thresh (0=auto):", self.spin_grad)
+        g_edge.addRow("Edge pick:", self.cmb_edgepick)
+
+
 
         # 2) Presence/Absence
         self.grp_presence = QtWidgets.QWidget()
@@ -573,7 +632,8 @@ class BuilderTab(QtWidgets.QWidget):
 
     # ------------- Dáta -------------
     def load_recipe(self):
-        name = self.edit_recipe.text().strip()
+        name = self.recipe_picker.current()
+
         try:
             self.recipe = self.store.load(name)
         except Exception:
@@ -586,7 +646,8 @@ class BuilderTab(QtWidgets.QWidget):
         self._update_mask_buttons()
 
     def save_recipe(self):
-        name = self.edit_recipe.text().strip()
+        name = self.recipe_picker.current()
+
         self.store.save_version(name, self.recipe)
         QtWidgets.QMessageBox.information(self, "OK", f"Recept {name} uložený.")
         try:
@@ -730,12 +791,28 @@ class BuilderTab(QtWidgets.QWidget):
         self.spin_canny_lo.setValue(int(params.get("canny_lo", 40)))
         self.spin_canny_hi.setValue(int(params.get("canny_hi", 120)))
         metric = str(params.get("metric", "px_gap")).lower()
-        self.cmb_metric.setCurrentText("coverage_pct (viac=lepšie)" if metric=="coverage_pct" else "px_gap (menej=lepšie)")
-        # prepnime aj jednotky
         if metric == "coverage_pct":
+            self.cmb_metric.setCurrentText("coverage_pct (viac=lepšie)")
             self.edit_units.setText("%")
-        elif self.edit_units.text().strip() == "%":
-            self.edit_units.setText("px")
+        elif metric == "edge_distance":
+            self.cmb_metric.setCurrentText("edge_distance (vzdialenosť hrán, px)")
+            if self.edit_units.text().strip() == "%": self.edit_units.setText("px")
+        elif metric == "edge_pos":
+            self.cmb_metric.setCurrentText("edge_pos (poloha hrany, px)")
+            if self.edit_units.text().strip() == "%": self.edit_units.setText("px")
+        else:
+            self.cmb_metric.setCurrentText("px_gap (menej=lepšie)")
+            if self.edit_units.text().strip() == "%": self.edit_units.setText("px")
+
+        # profilové doplnky
+        pol = str(params.get("polarity", "auto")).lower()
+        self.cmb_polarity.setCurrentText({"auto":"Auto","dark2light":"Dark→Light","light2dark":"Light→Dark"}.get(pol, "Auto"))
+        self.spin_grad.setValue(int(params.get("grad_thresh", 0)))
+        ep = str(params.get("edge_pick","strongest")).lower()
+        self.cmb_edgepick.setCurrentText({"first":"First","last":"Last","strongest":"Strongest"}.get(ep, "Strongest"))
+
+        # uprac zobrazenie podľa metriky
+        self._on_metric_changed()
 
         # --- Presence/Absence ---
         self.dbl_minScore.setValue(float(params.get("minScore", 0.70)))
@@ -763,16 +840,27 @@ class BuilderTab(QtWidgets.QWidget):
         self._update_ui_for_tool(typ)
 
 
-        is_diff = (typ == "diff_from_ref")
-        is_edge = self._supports_shape(typ)
+        is_diff  = (typ == "diff_from_ref")
+        is_edge  = self._supports_shape(typ)
+        is_tmpl  = (typ or "").lower() == "template_match"
+        is_hough = (typ or "").lower() == "hough_circle"
 
         # Diff-only polia
         for w in (self.spin_thresh, self.spin_morph, self.spin_blob, self.cmb_measure):
             w.setEnabled(is_diff)
 
-        # Presety a Auto-teach: povoliť pre diff aj edge
-        for w in (self.cmb_preset, self.btn_preset, self.btn_autoteach, self.btn_autoteach_both):
-            w.setEnabled(is_diff or is_edge)
+        # Presety: povoliť pre diff, edge, template_match, hough_circle
+        self.cmb_preset.setEnabled(is_diff or is_edge or is_tmpl or is_hough)
+        self.btn_preset.setEnabled(is_diff or is_edge or is_tmpl or is_hough)
+
+        # Auto-teach: zatiaľ len pre diff a edge
+        self.btn_autoteach.setEnabled(is_diff or is_edge)
+        self.btn_autoteach_both.setEnabled(is_diff or is_edge)
+
+        # Auto-teach: zatiaľ len pre diff a edge (ako doteraz)
+        self.btn_autoteach.setEnabled(is_diff or is_edge)
+        self.btn_autoteach_both.setEnabled(is_diff or is_edge)
+
 
         # Naplň zoznam presetov podľa typu
         self._load_presets_for_type(typ)
@@ -784,10 +872,16 @@ class BuilderTab(QtWidgets.QWidget):
     def _load_presets_for_type(self, typ: str):
         """Naplní combo Predvoľba podľa typu nástroja."""
         self.cmb_preset.clear()
-        if (typ or "").lower() in {"_wip_edge_line", "_wip_edge_circle", "_wip_edge_curve"}:
+        t = (typ or "").lower()
+        if t in {"_wip_edge_line", "_wip_edge_circle", "_wip_edge_curve"}:
             self.cmb_preset.addItems(list(EDGE_PRESETS.keys()))
+        elif t == "template_match":
+            self.cmb_preset.addItems(list(TMPL_PRESETS.keys()))
+        elif t == "hough_circle":
+            self.cmb_preset.addItems(list(HOUGH_PRESETS.keys()))
         else:
             self.cmb_preset.addItems(list(DIFF_PRESETS.keys()))
+
 
     def _apply_edge_preset(self, p: dict):
         """Aplikuje edge preset do UI (bez potreby hneď klikať Použiť zmeny)."""
@@ -803,15 +897,38 @@ class BuilderTab(QtWidgets.QWidget):
         elif met != "coverage_pct" and self.edit_units.text().strip() == "%":
             self.edit_units.setText("px")
 
-    def _on_metric_changed(self, *_):
-        """Keď užívateľ prepne metriku edge-trace, prepneme aj jednotky."""
-        txt = self.cmb_metric.currentText().lower()
-        if "coverage_pct" in txt:
-            if self.edit_units.text().strip() != "%":
-                self.edit_units.setText("%")
-        else:
-            if self.edit_units.text().strip() == "%":
-                self.edit_units.setText("px")
+    def _on_metric_changed(self):
+        m = (self.cmb_metric.currentText() or "").lower()
+        is_edge_profile = m.startswith("edge_")  # edge_distance / edge_pos
+        is_edge_pos     = m.startswith("edge_pos")
+
+        # Canny viditeľné len pre px_gap/coverage_pct
+        show_canny = not is_edge_profile
+        self.spin_canny_lo.setVisible(show_canny)
+        self.spin_canny_hi.setVisible(show_canny)
+
+        # Polarity/Grad/EdgePick viditeľné len pre edge_* (edge_pos = aj Edge pick)
+        self.cmb_polarity.setVisible(is_edge_profile)
+        self.spin_grad.setVisible(is_edge_profile)
+        self.cmb_edgepick.setVisible(is_edge_pos)
+
+        # Skry aj príslušné LABELY vo FormLayout-e
+        for i in range(self.grp_edge.layout().rowCount()):
+            item_label = self.grp_edge.layout().itemAt(i, QtWidgets.QFormLayout.LabelRole)
+            if not item_label: 
+                continue
+            lbl = item_label.widget()
+            if not lbl: 
+                continue
+            txt = (lbl.text() or "").lower()
+            if "canny low" in txt or "canny high" in txt:
+                lbl.setVisible(show_canny)
+            if "polarity" in txt or "grad" in txt:
+                lbl.setVisible(is_edge_profile)
+            if "edge pick" in txt:
+                lbl.setVisible(is_edge_pos)
+
+
 
 
     def _supports_shape(self, typ: str) -> bool:
@@ -843,12 +960,22 @@ class BuilderTab(QtWidgets.QWidget):
         is_tmpl  = (typ or "").lower() == "template_match"
         is_hough = (typ or "").lower() == "hough_circle"
 
-        # shape ovládanie (štetce + šírka profilu)
-        self.btn_mode_line.setVisible(shape)
-        self.btn_mode_circle.setVisible(shape)
-        self.btn_mode_poly.setVisible(shape)
-        self.spin_width.setVisible(shape)
-        self.lbl_width.setVisible(shape)
+        # shape ovládanie (štetce + šírka profilu) – obmedz podľa typu
+        allow_line   = shape and ((typ or "").lower() == "_wip_edge_line")
+        allow_circle = shape and ((typ or "").lower() == "_wip_edge_circle")
+        allow_poly   = shape and ((typ or "").lower() == "_wip_edge_curve")
+
+        self.btn_mode_line.setVisible(allow_line)
+        self.btn_mode_circle.setVisible(allow_circle)
+        self.btn_mode_poly.setVisible(allow_poly)
+        # LINE 2-klik checkbox ukáž iba keď má zmysel
+        if hasattr(self, "chk_line_two_click"):
+            self.chk_line_two_click.setVisible(allow_line)
+
+        any_shape = allow_line or allow_circle or allow_poly
+        self.spin_width.setVisible(any_shape)
+        self.lbl_width.setVisible(any_shape)
+
 
         # mask ovládanie a tlačidlá
         self.btn_mode_mask.setVisible(masks)
@@ -1009,6 +1136,24 @@ class BuilderTab(QtWidgets.QWidget):
             p = EDGE_PRESETS.get(name)
             if not p: return
             self._apply_edge_preset(p)
+        elif typ == "template_match":
+            p = TMPL_PRESETS.get(name)
+            if not p: return
+            self.dbl_tm_min.setValue(float(p.get("min_score",0.7)))
+            self.spin_tm_max.setValue(int(p.get("max_matches",5)))
+            self.spin_tm_dist.setValue(int(p.get("min_distance",12)))
+            self.cmb_tm_mode.setCurrentText("Počet nálezov" if p.get("mode")=="count" else "Najlepšie skóre")
+            self.edit_units.setText("ks" if p.get("mode")=="count" else "score")
+        elif typ == "hough_circle":
+            p = HOUGH_PRESETS.get(name)
+            if not p: return
+            self.dbl_hc_dp.setValue(float(p.get("dp",1.2)))
+            self.dbl_hc_minDist.setValue(float(p.get("minDist",12.0)))
+            self.dbl_hc_p1.setValue(float(p.get("param1",100.0)))
+            self.dbl_hc_p2.setValue(float(p.get("param2",30.0)))
+            self.spin_hc_minR.setValue(int(p.get("minRadius",0)))
+            self.spin_hc_maxR.setValue(int(p.get("maxRadius",0)))
+            self.edit_units.setText("ks")
         else:
             p = DIFF_PRESETS.get(name)
             if not p: return
@@ -1017,6 +1162,7 @@ class BuilderTab(QtWidgets.QWidget):
             self.spin_blob.setValue(p["blob"])
             self.cmb_measure.setCurrentText("Plocha vád (px²)" if p["measure"]=="area" else "Počet vád")
         self.help_box.setPlainText(HELP_TEXTS["preset"])
+
 
 
     def add_tool(self):
@@ -1092,7 +1238,34 @@ class BuilderTab(QtWidgets.QWidget):
         elif t.get("type") in {"_wip_edge_line", "_wip_edge_circle", "_wip_edge_curve"}:
             p["canny_lo"] = int(self.spin_canny_lo.value())
             p["canny_hi"] = int(self.spin_canny_hi.value())
-            p["metric"] = "coverage_pct" if self.cmb_metric.currentText().startswith("coverage") else "px_gap"
+
+            mtxt = (self.cmb_metric.currentText() or "").lower()
+            if mtxt.startswith("coverage"):
+                p["metric"] = "coverage_pct"
+            elif mtxt.startswith("edge_distance"):
+                p["metric"] = "edge_distance"
+            elif mtxt.startswith("edge_pos"):
+                p["metric"] = "edge_pos"
+            else:
+                p["metric"] = "px_gap"
+
+            # profilové polia pre edge_* metriky
+            p["polarity"] = {
+                "Auto":"auto",
+                "Dark→Light":"dark2light",
+                "Light→Dark":"light2dark"
+            }.get(self.cmb_polarity.currentText(), "auto")
+            p["grad_thresh"] = int(self.spin_grad.value())
+            if p["metric"] == "edge_pos":
+                p["edge_pick"] = {
+                    "First":"first", "Last":"last", "Strongest":"strongest"
+                }.get(self.cmb_edgepick.currentText(), "strongest")
+
+            # jednotky: % len pre coverage_pct, inak px
+            if p["metric"] == "coverage_pct":
+                self.edit_units.setText("%")
+            elif self.edit_units.text().strip() == "%":
+                self.edit_units.setText("px")
 
         # Presence/Absence parametre
         elif t.get("type") == "presence_absence":
@@ -1244,7 +1417,30 @@ class BuilderTab(QtWidgets.QWidget):
             params["canny_lo"] = int(self.spin_canny_lo.value())
             params["canny_hi"] = int(self.spin_canny_hi.value())
             params["width"]    = int(self.spin_width.value())
-            params["metric"]   = "coverage_pct" if self.cmb_metric.currentText().startswith("coverage") else "px_gap"
+            mtext = self.cmb_metric.currentText()
+            if mtext.startswith("coverage"):
+                params["metric"] = "coverage_pct"
+            elif mtext.startswith("edge_distance"):
+                params["metric"] = "edge_distance"
+            elif mtext.startswith("edge_pos"):
+                params["metric"] = "edge_pos"
+            else:
+                params["metric"] = "px_gap"
+
+            # Spoločné profilové polia (edge_*)
+            params["polarity"] = {
+                "Auto":"auto",
+                "Dark→Light":"dark2light",
+                "Light→Dark":"light2dark"
+            }.get(self.cmb_polarity.currentText(), "auto")
+            params["grad_thresh"] = int(self.spin_grad.value())
+
+            # Len pre edge_pos
+            if params["metric"] == "edge_pos":
+                params["edge_pick"] = {
+                    "First":"first", "Last":"last", "Strongest":"strongest"
+                }.get(self.cmb_edgepick.currentText(), "strongest")
+
 
             tool = ToolCls(name=t.get("name","Edge"), roi_xywh=roi, params=params,
                         lsl=t.get("lsl"), usl=t.get("usl"),

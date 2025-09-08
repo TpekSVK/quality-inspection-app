@@ -2,6 +2,8 @@
 import json, time, os, shutil
 from pathlib import Path
 from typing import Optional, List, Dict, Any
+import shutil
+
 
 class RecipeStoreJSON:
     """
@@ -75,3 +77,33 @@ class RecipeStoreJSON:
     def latest_version_path(self, name: str) -> Optional[str]:
         items = self.list_versions(name)
         return str(self.root / name / items[-1]) if items else None
+   
+    def list_names(self):
+        """
+        Vráti zoznam názvov receptov (mená priečinkov v self.root),
+        ktoré obsahujú aspoň 1 JSON (verziu) alebo current.json.
+        """
+        names = []
+        for p in self.root.iterdir():
+            if not p.is_dir():
+                continue
+            has_json = any((p / "current.json").exists() or list(p.glob("*.json")))
+            if has_json:
+                names.append(p.name)
+        return sorted(names)
+   
+    def delete(self, name: str) -> bool:
+        """
+        Zmaže celý priečinok receptu: recipes/<name>
+        Vracia True ak sa podarilo, inak False.
+        Bezpečnostné kontroly proti '..' a separátorom.
+        """
+        if not name:
+            return False
+        if "/" in name or "\\" in name or ".." in name:
+            return False
+        p = self.root / name
+        if p.exists() and p.is_dir():
+            shutil.rmtree(p)
+            return True
+        return False

@@ -14,6 +14,11 @@ class ROIDrawer(QtWidgets.QLabel):
       - ROI (modrý obdĺžnik)
       - masky (fialové obdĺžniky)
       - tvary pre „edge trace“ nástroje: line / circle / polyline (žlté)
+
+    NOVINKY:
+      - Zoom na koliesko myši (zoomuje na kurzor, nevycentruje ťa naspäť)
+      - Pan (pravé alebo stredné tlačidlo myši)
+      - Tlačidlá v rohu: + / − / Fit
     """
     roiChanged = QtCore.pyqtSignal(int, int, int, int)     # x,y,w,h
     maskAdded = QtCore.pyqtSignal(int, int, int, int)      # x,y,w,h
@@ -24,21 +29,31 @@ class ROIDrawer(QtWidgets.QLabel):
         super().__init__(parent)
         self.setAlignment(QtCore.Qt.AlignCenter)
         self.setMinimumSize(480, 360)
-        self._show_overlays = True  # <<< NOVÉ: ovládanie viditeľnosti ROI/masky
+        self._show_overlays = True
 
         self.setStyleSheet("QLabel{background:#111; color:#bbb;}")
 
+        # obrázok a odvodené dáta
         self._img = None
         self._qimg = None
         self._pix = None
-        self._scale = 1.0
+
+        # transformácia obraz -> widget
+        self._scale = 1.0        # aktuálna mierka = _base_scale * _zoom_factor
+        self._base_scale = 1.0   # fit-to-window mierka (prepočíta sa v _update_pix)
+        self._zoom_factor = 1.0  # relatívny zoom nad fit-to-window (1.0 = fit)
+        self._fit_mode = True    # ak True, centrovanie drží „fit“. Pri zoom/pan sa vypne.
         self._offx = 0
         self._offy = 0
 
-        # interakčný stav
+        # pan stav
+        self._panning = False
+        self._pan_start = None
+
+        # interakčný stav kreslenia
         self._drag = False
         self._x0 = self._y0 = 0
-        self._rect = None           # dočasne kreslený obdĺžnik (x,y,w,h) v IMG súradniciach
+        self._rect = None           # dočasný obdĺžnik (x,y,w,h) v IMG súradniciach
 
         # dáta ROI / masky
         self._roi = None            # uložený ROI (x,y,w,h)
@@ -53,8 +68,26 @@ class ROIDrawer(QtWidgets.QLabel):
         self._stroke_width = 3      # šírka profilu okolo linky (pre tooly)
         self._tmp_shape = None      # rozpracovaná kresba pre line/circle
 
+        # LINE: 2-klik režim (klik začiatok → klik koniec)
+        self._line_two_click = False
+        self._line_first = None     # (x,y) prvého kliku pri 2-klik móde
+
         # polyline rozpracované body
         self._poly_points = []      # [(x,y), ...] počas kreslenia polyline
+
+        # --- UI: rohové tlačidlá + / − / Fit ---
+        self._btn_zoom_in = QtWidgets.QPushButton("+", self); self._btn_zoom_in.setFixedSize(28, 24)
+        self._btn_zoom_out = QtWidgets.QPushButton("−", self); self._btn_zoom_out.setFixedSize(28, 24)
+        self._btn_fit = QtWidgets.QPushButton("Fit", self);   self._btn_fit.setFixedSize(36, 24)
+        for b in (self._btn_zoom_in, self._btn_zoom_out, self._btn_fit):
+            b.setFocusPolicy(QtCore.Qt.NoFocus)
+            b.setStyleSheet(
+                "QPushButton{background:#222;color:#ddd;border:1px solid #444;border-radius:4px;}"
+                "QPushButton:hover{background:#333;}"
+            )
+        self._btn_zoom_in.clicked.connect(lambda: self._zoom_step(+1))
+        self._btn_zoom_out.clicked.connect(lambda: self._zoom_step(-1))
+        self._btn_fit.clicked.connect(self.reset_view)
 
     # ------------- Verejné API -------------
 
@@ -69,7 +102,10 @@ class ROIDrawer(QtWidgets.QLabel):
         self._tmp_shape = None
         if mode != "polyline":
             self._poly_points = []
+        if mode != "line":
+            self._line_first = None
         self.update()
+
 
     def get_mode(self) -> str:
         return self._mode
@@ -82,19 +118,35 @@ class ROIDrawer(QtWidgets.QLabel):
             self.shapeChanged.emit(self._shape.copy())
         self.update()
 
+    def set_line_two_click(self, enabled: bool):
+        """Zapne/vypne '2-klik' kreslenie čiary (klik začiatok → klik koniec)."""
+        self._line_two_click = bool(enabled)
+        # reset rozkreslených stavov
+        self._drag = False
+        self._tmp_shape = None
+        self._line_first = None
+        self.update()
+
+
     def set_ndarray(self, img):
+        """Nastaví zobrazený obraz (numpy ndarray). Resetne fit, ale zachová mód a kreslenie."""
         self._img = img
         if img is None:
             self._qimg = None; self._pix = None
             self.setText("—")
+            self.update()
             return
         if img.ndim == 2:
-            h,w = img.shape
+            h, w = img.shape
             qimg = QtGui.QImage(img.data, w, h, w, QtGui.QImage.Format_Grayscale8)
         else:
-            h,w,_ = img.shape
+            h, w, _ = img.shape
             qimg = QtGui.QImage(img.data, w, h, 3*w, QtGui.QImage.Format_BGR888)
         self._qimg = qimg.copy()
+
+        # pri novom obrázku defaultne fitni
+        self._zoom_factor = 1.0
+        self._fit_mode = True
         self._update_pix()
 
     # --- ROI ---
@@ -116,7 +168,6 @@ class ROIDrawer(QtWidgets.QLabel):
     def set_show_overlays(self, show: bool):
         self._show_overlays = bool(show)
         self.update()
-
 
     def masks(self):
         return list(self._masks)
@@ -159,17 +210,35 @@ class ROIDrawer(QtWidgets.QLabel):
             return
         lblw, lblh = self.width(), self.height()
         imw, imh = self._qimg.width(), self._qimg.height()
-        self._scale = min(lblw / imw, lblh / imh)
-        dw = int(imw * self._scale)
-        dh = int(imh * self._scale)
-        self._offx = (lblw - dw) // 2
-        self._offy = (lblh - dh) // 2
-        self._pix = QtGui.QPixmap.fromImage(self._qimg).scaled(dw, dh, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+
+        # fit-to-window základ
+        self._base_scale = min(lblw / imw, lblh / imh) if (imw > 0 and imh > 0) else 1.0
+        self._scale = self._base_scale * self._zoom_factor
+
+        dw = int(max(1, imw * self._scale))
+        dh = int(max(1, imh * self._scale))
+
+        # len v režime fit centrovať; inak zachovať manuálny offset
+        if self._fit_mode:
+            self._offx = (lblw - dw) // 2
+            self._offy = (lblh - dh) // 2
+
+        self._pix = QtGui.QPixmap.fromImage(self._qimg).scaled(
+            dw, dh, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation
+        )
         self.update()
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
         self._update_pix()
+        # rozloženie tlačidiel do ľavého horného rohu s malým odsadením
+        pad = 8
+        x = pad; y = pad
+        self._btn_zoom_in.move(x, y)
+        self._btn_zoom_out.move(x + self._btn_zoom_in.width() + 6, y)
+        self._btn_fit.move(x + self._btn_zoom_in.width() + self._btn_zoom_out.width() + 12, y)
+        for b in (self._btn_zoom_in, self._btn_zoom_out, self._btn_fit):
+            b.raise_()
 
     def paintEvent(self, e):
         super().paintEvent(e)
@@ -198,12 +267,11 @@ class ROIDrawer(QtWidgets.QLabel):
                 x,y,w,h = self._roi
                 rx, ry = iw(x,y)
                 rw = int(w*self._scale); rh = int(h*self._scale)
-                p.setPen(QtGui.QPen(COLOR_ROI, UI.PEN_THICK, QtCore.Qt.SolidLine))                
+                p.setPen(QtGui.QPen(COLOR_ROI, UI.PEN_THICK, QtCore.Qt.SolidLine))
                 p.drawRect(rx, ry, rw, rh)
 
-            # --- Shape (žltý) – najprv hotový shape, potom dočasný ---
+            # --- Shape (žltý) – hotový + dočasný ---
             p.setPen(QtGui.QPen(COLOR_SHAPE, UI.PEN_THIN, QtCore.Qt.SolidLine))
-
 
             def draw_shape(shape):
                 if not shape or "shape" not in shape: return
@@ -256,13 +324,72 @@ class ROIDrawer(QtWidgets.QLabel):
                 rw = int(w*self._scale); rh = int(h*self._scale)
                 color = COLOR_ROI if self._mode=="roi" else COLOR_MASK
                 p.setPen(QtGui.QPen(color, UI.PEN_THIN, QtCore.Qt.DashLine))
-
                 p.drawRect(rx, ry, rw, rh)
+
+    # ----------------- Zoom & Pan -----------------
+
+    def wheelEvent(self, ev: QtGui.QWheelEvent):
+        """Zoom na kurzor – bod pod kolieskom ostáva na mieste."""
+        if self._qimg is None:
+            return
+        wx, wy = ev.x(), ev.y()
+        ix, iy = self._widget_to_image(wx, wy)
+
+        # cieľový faktor
+        factor = 1.25 if ev.angleDelta().y() > 0 else (1.0 / 1.25)
+        new_zoom = max(0.1, min(10.0, self._zoom_factor * factor))
+        self._fit_mode = False
+
+        if ix is None:
+            # mimo pixmapy – zoom okolo stredu
+            self._zoom_factor = new_zoom
+            self._update_pix()
+            return
+
+        # prepočet tak, aby (ix,iy) ostal pod (wx,wy)
+        self._zoom_factor = new_zoom
+        lblw, lblh = self.width(), self.height()
+        imw, imh = self._qimg.width(), self._qimg.height()
+        self._base_scale = min(lblw / imw, lblh / imh) if (imw > 0 and imh > 0) else 1.0
+        self._scale = self._base_scale * self._zoom_factor
+
+        # wx = offx + ix * scale  => offx = wx - ix*scale
+        self._offx = int(wx - ix * self._scale)
+        self._offy = int(wy - iy * self._scale)
+
+        # pregeneruj pixmapu na novú mierku (offset ponecháme)
+        dw = int(max(1, imw * self._scale))
+        dh = int(max(1, imh * self._scale))
+        self._pix = QtGui.QPixmap.fromImage(self._qimg).scaled(
+            dw, dh, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation
+        )
+        self.update()
+
+    def reset_view(self):
+        """Reset na fit-to-window a centrovanie."""
+        self._zoom_factor = 1.0
+        self._fit_mode = True
+        self._update_pix()
+
+    def _zoom_step(self, direction: int):
+        """Helper pre +/− tlačidlá – zoomuje okolo stredu widgetu."""
+        if direction not in (+1, -1):
+            return
+        fake_delta = 120 if direction > 0 else -120
+        cx = self.width() // 2
+        cy = self.height() // 2
+        ev = QtGui.QWheelEvent(
+            QtCore.QPointF(cx, cy), QtCore.QPointF(cx, cy),
+            QtCore.QPoint(0, fake_delta), QtCore.QPoint(0, fake_delta),
+            fake_delta, QtCore.Qt.Vertical, QtCore.Qt.NoButton, QtCore.Qt.NoModifier
+        )
+        self.wheelEvent(ev)
 
     # ----------------- Mouse logika -----------------
 
     def _widget_to_image(self, px, py):
-        if self._qimg is None: return (None, None)
+        if self._qimg is None or self._pix is None:
+            return (None, None)
         x = px - self._offx
         y = py - self._offy
         if x < 0 or y < 0 or x >= self._pix.width() or y >= self._pix.height():
@@ -276,8 +403,18 @@ class ROIDrawer(QtWidgets.QLabel):
     def mousePressEvent(self, ev: QtGui.QMouseEvent):
         if self._img is None or self._qimg is None:
             return super().mousePressEvent(ev)
+
+        # Pan pravým/stredným tlačidlom – len keď nekreslíme
+        if ev.button() in (QtCore.Qt.MiddleButton, QtCore.Qt.RightButton):
+            if not self._drag and self._mode not in ("polyline",):
+                self._panning = True
+                self._pan_start = ev.pos()
+                self._fit_mode = False
+                self.setCursor(QtCore.Qt.ClosedHandCursor)
+                return
+
+        # Polyline – pravým tlačidlom undo posledný bod
         if ev.button() == QtCore.Qt.RightButton and self._mode == "polyline":
-            # undo posledný bod
             if self._poly_points:
                 self._poly_points.pop()
                 self.update()
@@ -299,11 +436,27 @@ class ROIDrawer(QtWidgets.QLabel):
             return
 
         if self._mode == "line":
-            # začiatok úsečky
-            self._drag = True
-            self._tmp_shape = {"shape":"line", "pts":[[ix,iy],[ix,iy]], "width": self._stroke_width}
-            self.update()
-            return
+            if self._line_two_click:
+                # 2-klik: prvý klik nastaví začiatok, druhý klik ukončí
+                if self._line_first is None:
+                    self._line_first = (ix, iy)
+                    self._tmp_shape = {"shape":"line", "pts":[[ix,iy],[ix,iy]], "width": self._stroke_width}
+                    self.update()
+                else:
+                    x0, y0 = self._line_first
+                    self._shape = {"shape":"line", "pts":[[x0,y0],[ix,iy]], "width": self._stroke_width}
+                    self._line_first = None
+                    self._tmp_shape = None
+                    self.shapeChanged.emit(self._shape.copy())
+                    self.update()
+                return
+            else:
+                # klasika – ťahaním
+                self._drag = True
+                self._tmp_shape = {"shape":"line", "pts":[[ix,iy],[ix,iy]], "width": self._stroke_width}
+                self.update()
+                return
+
 
         if self._mode == "circle":
             # stred kruhu
@@ -323,6 +476,18 @@ class ROIDrawer(QtWidgets.QLabel):
     def mouseMoveEvent(self, ev: QtGui.QMouseEvent):
         if self._img is None or self._qimg is None:
             return super().mouseMoveEvent(ev)
+
+        # panovanie
+        if self._panning and self._pan_start is not None:
+            dx = ev.x() - self._pan_start.x()
+            dy = ev.y() - self._pan_start.y()
+            self._offx += dx
+            self._offy += dy
+            self._pan_start = ev.pos()
+            self._fit_mode = False
+            self.update()
+            return
+
         ix, iy = self._widget_to_image(ev.x(), ev.y())
         if ix is None:
             return super().mouseMoveEvent(ev)
@@ -335,11 +500,18 @@ class ROIDrawer(QtWidgets.QLabel):
             self.update()
             return
 
-        if self._mode == "line" and self._drag and self._tmp_shape:
-            # update druhého bodu
+        # LINE – 2-klik: ťahaj len náhľad
+        if self._mode == "line" and self._line_two_click and self._line_first is not None and self._tmp_shape:
             self._tmp_shape["pts"][1] = [ix, iy]
             self.update()
             return
+
+        # LINE – ťahaním
+        if self._mode == "line" and self._drag and self._tmp_shape:
+            self._tmp_shape["pts"][1] = [ix, iy]
+            self.update()
+            return
+
 
         if self._mode == "circle" and self._drag and self._tmp_shape:
             # update polomeru
@@ -354,6 +526,13 @@ class ROIDrawer(QtWidgets.QLabel):
     def mouseReleaseEvent(self, ev: QtGui.QMouseEvent):
         if self._img is None or self._qimg is None:
             return super().mouseReleaseEvent(ev)
+
+        # ukonči pan
+        if ev.button() in (QtCore.Qt.MiddleButton, QtCore.Qt.RightButton):
+            if self._panning:
+                self._panning = False
+                self.setCursor(QtCore.Qt.ArrowCursor)
+                return
 
         if ev.button() == QtCore.Qt.LeftButton:
             if self._mode in ("roi", "mask") and self._drag:
